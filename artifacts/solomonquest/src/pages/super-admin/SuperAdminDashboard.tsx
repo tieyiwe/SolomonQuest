@@ -568,6 +568,19 @@ export default function SuperAdminDashboard() {
     }
   };
 
+  const [viewingAsId, setViewingAsId] = useState<string | null>(null);
+
+  const handleViewAs = async (user: UserRecord) => {
+    setViewingAsId(user.id);
+    try {
+      const { startImpersonation } = await import("@/lib/impersonation");
+      await startImpersonation(user.id);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to start view-as session");
+      setViewingAsId(null);
+    }
+  };
+
   const handleSuspendUser = async (user: UserRecord) => {
     try {
       const res = await apiFetch(`/api/super-admin/users/${user.id}/suspend`, { method: "PATCH" });
@@ -1135,6 +1148,17 @@ export default function SuperAdminDashboard() {
                               <option value="teacher">teacher</option>
                               <option value="student">student</option>
                             </select>
+                            {(user.role === "teacher" || user.role === "staff" || user.role === "student") && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs border-gray-600 text-blue-300 hover:bg-blue-900/30"
+                                disabled={viewingAsId === user.id}
+                                onClick={() => handleViewAs(user)}
+                              >
+                                {viewingAsId === user.id ? "Switching…" : "View As"}
+                              </Button>
+                            )}
                             <Button
                               size="sm"
                               variant="outline"
