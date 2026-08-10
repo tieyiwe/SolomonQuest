@@ -1,4 +1,5 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import { StudentLayout } from "@/components/layout/StudentLayout";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -91,12 +92,13 @@ function gpaColor(gpa: number) {
 }
 
 async function fetchTranscript(studentId: string): Promise<TranscriptData> {
-  const res = await fetch(`/api/grading/transcript/${studentId}`, {
-    credentials: "include",
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(`/api/transcript/${studentId}`, {
+    headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
   });
   if (!res.ok) {
-    const err = await res.text().catch(() => "Unknown error");
-    throw new Error(`Failed to load transcript: ${res.status} ${err}`);
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Failed to load transcript (${res.status})`);
   }
   return res.json();
 }
@@ -368,10 +370,7 @@ export default function StudentTranscript() {
               <Card className="border-dashed">
                 <CardContent className="text-center py-12">
                   <BookOpen className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
-                  <p className="font-medium">No courses on record</p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Enroll in courses to see your transcript here.
-                  </p>
+                  <p className="font-medium">No transcript available yet</p>
                 </CardContent>
               </Card>
             ) : (

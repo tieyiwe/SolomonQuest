@@ -399,7 +399,7 @@ router.post(
 
       // Security: verify the student is enrolled in the quiz's course
       const { data: enrollment, error: enrollmentError } = await supabaseAdmin
-        .from("enrollments")
+        .from("course_enrollments")
         .select("id")
         .eq("course_id", quiz.course_id)
         .eq("student_id", userId)

@@ -77,7 +77,7 @@ router.get(
           .select("id", { count: "exact", head: true })
           .eq("role", "teacher"),
         supabaseAdmin.from("courses").select("id", { count: "exact", head: true }),
-        supabaseAdmin.from("enrollments").select("id", { count: "exact", head: true }),
+        supabaseAdmin.from("course_enrollments").select("id", { count: "exact", head: true }),
         supabaseAdmin.from("applications").select("id", { count: "exact", head: true }),
         supabaseAdmin
           .from("schools")
@@ -818,7 +818,7 @@ router.get(
 
       // Enrollments by month
       const { data: enrollmentsData } = await supabaseAdmin
-        .from("enrollments")
+        .from("course_enrollments")
         .select("created_at")
         .gte("created_at", `${months[0]}-01`);
 
@@ -829,7 +829,7 @@ router.get(
 
       // Top 10 schools by enrollment
       const { data: allEnrollments } = await supabaseAdmin
-        .from("enrollments")
+        .from("course_enrollments")
         .select("course_id");
 
       const { data: allCourses } = await supabaseAdmin
@@ -1010,7 +1010,7 @@ router.post(
           .select("id", { count: "exact", head: true })
           .eq("school_id", request.school_id),
         supabaseAdmin
-          .from("enrollments")
+          .from("course_enrollments")
           .select("id", { count: "exact", head: true })
           .eq("school_id", request.school_id),
       ]);

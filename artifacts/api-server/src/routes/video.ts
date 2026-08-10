@@ -42,7 +42,7 @@ router.post("/video/sessions", requireAuth, async (req: AuthenticatedRequest, re
     }
 
     const { data: enrollments, error: enrollError } = await supabaseAdmin
-      .from("enrollments")
+      .from("course_enrollments")
       .select("user_id")
       .eq("course_id", course_id);
 
@@ -100,7 +100,7 @@ router.get("/video/sessions", requireAuth, async (req: AuthenticatedRequest, res
 
     if (!isTeacher) {
       const { data: enrollment, error: enrollError } = await supabaseAdmin
-        .from("enrollments")
+        .from("course_enrollments")
         .select("id")
         .eq("course_id", course_id as string)
         .eq("user_id", userId)

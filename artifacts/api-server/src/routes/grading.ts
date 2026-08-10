@@ -207,7 +207,7 @@ router.get("/transcript/:student_id", requireAuth, async (req: AuthenticatedRequ
       } else if (userRole === "teacher") {
         // Teacher must be the teacher of at least one course the student is enrolled in
         const { data: sharedCourses, error: sharedCoursesError } = await supabaseAdmin
-          .from("enrollments")
+          .from("course_enrollments")
           .select(`
             course_id,
             courses:course_id (
@@ -371,7 +371,7 @@ router.get("/gradebook", requireAuth, async (req: AuthenticatedRequest, res) => 
 
     // Get all enrollments for the course with student profiles
     const { data: enrollments, error: enrollmentsError } = await supabaseAdmin
-      .from("enrollments")
+      .from("course_enrollments")
       .select(`
         student_id,
         profiles:student_id (

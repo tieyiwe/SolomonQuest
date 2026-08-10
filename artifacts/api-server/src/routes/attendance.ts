@@ -138,7 +138,7 @@ router.post("/attendance/checkin", requireAuth, async (req: AuthenticatedRequest
 
   // Check if student is enrolled
   const { data: enrollment } = await supabaseAdmin
-    .from("enrollments")
+    .from("course_enrollments")
     .select("id")
     .eq("course_id", course_id)
     .eq("student_id", studentId)
@@ -200,7 +200,7 @@ router.get("/attendance/live-class", requireAuth, async (req: AuthenticatedReque
 
   // Get all enrollments for the course
   const { data: enrollments, error: enrollError } = await supabaseAdmin
-    .from("enrollments")
+    .from("course_enrollments")
     .select("student_id, profiles:student_id(first_name, last_name, unique_student_id)")
     .eq("course_id", course_id);
 
