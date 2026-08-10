@@ -641,6 +641,14 @@ router.patch(
         return;
       }
 
+      // A super admin changing their own role (a misclick on the same row
+      // they're using to manage everyone else) would lock them out of the
+      // console that's the only place this can be undone.
+      if (id === req.userId) {
+        res.status(400).json({ error: "You cannot change your own role" });
+        return;
+      }
+
       const { data: profile, error: fetchErr } = await supabaseAdmin
         .from("profiles")
         .select("id, first_name, last_name, role")

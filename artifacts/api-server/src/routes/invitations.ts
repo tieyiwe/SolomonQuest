@@ -275,6 +275,22 @@ router.post(
         return;
       }
 
+      // Security: this endpoint grants the invitation's role + school to
+      // whatever account is currently authenticated. If that ever isn't the
+      // actual invited person — e.g. someone already signed in (an admin
+      // testing/previewing an invite link, a stale session, a forged
+      // request) hits this with someone else's token — their OWN account
+      // would silently be overwritten with the invite's role and school.
+      // Require the caller's email to match the invited email.
+      const { data: callerAuth } = await supabaseAdmin.auth.admin.getUserById(userId!);
+      const callerEmail = callerAuth?.user?.email?.toLowerCase().trim();
+      if (!callerEmail || callerEmail !== invitation.email.toLowerCase().trim()) {
+        res.status(403).json({
+          error: "This invitation was sent to a different email address than the account you're signed in as.",
+        });
+        return;
+      }
+
       // Update the invitee's profile with the role and school from the invitation
       const { error: profileError } = await supabaseAdmin
         .from("profiles")

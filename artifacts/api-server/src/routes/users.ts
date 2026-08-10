@@ -558,6 +558,13 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthenticatedRequest, r
     return;
   }
 
+  // Changing your own role (a misclick in the same table used to manage
+  // everyone else) could lock you out of the only place this is undone.
+  if (id === req.userId) {
+    res.status(400).json({ error: "You cannot change your own role" });
+    return;
+  }
+
   // Admins (non-super_admin) may only change roles for users in the same
   // school, and can never grant super_admin — that would be a privilege
   // escalation to platform-wide access from a single-school role.
