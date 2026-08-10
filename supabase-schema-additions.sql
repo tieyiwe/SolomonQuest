@@ -707,6 +707,14 @@ DROP POLICY IF EXISTS "chat_message_edits_all" ON public.chat_message_edits;
 CREATE POLICY "chat_message_edits_all" ON public.chat_message_edits FOR ALL USING (true) WITH CHECK (true);
 CREATE INDEX IF NOT EXISTS chat_message_edits_message_idx ON public.chat_message_edits (message_id, edited_at);
 
+-- ─── Test Mode ──────────────────────────────────────────────────────────────
+-- An admin can grant a specific user (e.g. someone on the team doing pre-
+-- launch testing) the ability to self-switch into any teacher/staff/student
+-- account in the school without needing an admin to do it for them each
+-- time — reuses the same "View As" magic-link impersonation flow admins get,
+-- just gated by this flag instead of by role.
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS test_mode_enabled boolean NOT NULL DEFAULT false;
+
 -- Force PostgREST to pick up the columns above immediately instead of
 -- waiting for its schema cache to refresh on its own.
 NOTIFY pgrst, 'reload schema';

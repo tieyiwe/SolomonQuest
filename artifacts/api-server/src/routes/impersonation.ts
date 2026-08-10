@@ -15,14 +15,29 @@ const IMPERSONATABLE_ROLES = new Set(["teacher", "staff", "student"]);
 // supabase.auth.verifyOtp — this establishes a *real* session as that user,
 // so every existing fetch/query in the app "just works" once the client
 // swaps to it, with no per-page changes needed.
+//
+// Two kinds of caller are allowed: an admin/super_admin using "View As", or
+// any user an admin has explicitly flagged with test_mode_enabled — lets a
+// team member self-switch between accounts for pre-launch testing without
+// needing an admin to trigger it every time. Both are still restricted to
+// teacher/staff/student targets in their own school (never another admin).
 
 router.post(
   "/admin/impersonate/:userId",
   requireAuth,
   async (req: AuthenticatedRequest, res): Promise<void> => {
-    if (req.userRole !== "admin" && req.userRole !== "super_admin") {
-      res.status(403).json({ error: "Forbidden" });
-      return;
+    const isAdmin = req.userRole === "admin" || req.userRole === "super_admin";
+
+    if (!isAdmin) {
+      const { data: caller } = await supabaseAdmin
+        .from("profiles")
+        .select("test_mode_enabled")
+        .eq("id", req.userId ?? "")
+        .single();
+      if (!caller?.test_mode_enabled) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
     }
 
     const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
@@ -71,7 +86,7 @@ router.post(
     }
 
     await supabaseAdmin.from("platform_audit_log").insert({
-      action: "admin_impersonate_start",
+      action: isAdmin ? "admin_impersonate_start" : "test_mode_switch_start",
       performed_by: req.userId,
       target_type: "user",
       target_id: userId,
@@ -80,8 +95,8 @@ router.post(
     });
 
     logger.info(
-      { adminId: req.userId, targetUserId: userId, targetRole: target.role },
-      "Admin started view-as session"
+      { callerId: req.userId, targetUserId: userId, targetRole: target.role, isAdmin },
+      "View-as session started"
     );
 
     res.json({

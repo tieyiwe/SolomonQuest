@@ -25,6 +25,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -132,6 +133,52 @@ function PasswordResetButton({ userId, userName }: { userId: string; userName: s
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function TestModeToggle({
+  userId,
+  userName,
+  enabled,
+  onChanged,
+}: {
+  userId: string;
+  userName: string;
+  enabled: boolean;
+  onChanged: (enabled: boolean) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+
+  const handleToggle = async (next: boolean) => {
+    setLoading(true);
+    onChanged(next);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`/api/users/${userId}/test-mode`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(
+        next ? `Test Mode enabled for ${userName}` : `Test Mode disabled for ${userName}`
+      );
+    } catch {
+      onChanged(!next);
+      toast.error("Failed to update Test Mode");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5" title="Test Mode: lets this user self-switch between teacher/staff/student accounts for testing">
+      <Switch checked={enabled} onCheckedChange={handleToggle} disabled={loading} className="scale-75" />
+      <span className="text-xs text-muted-foreground">Test Mode</span>
+    </div>
   );
 }
 
@@ -265,6 +312,7 @@ function UserTable({
   const updateUserRole = useUpdateUserRole();
   const [viewStudentId, setViewStudentId] = useState<string | null>(null);
   const [viewTeacherId, setViewTeacherId] = useState<string | null>(null);
+  const [testModeOverrides, setTestModeOverrides] = useState<Record<string, boolean>>({});
 
   const filtered = (users ?? []).filter((u) => {
     const name = `${u.firstName ?? ""} ${u.lastName ?? ""} ${u.email ?? ""}`.toLowerCase();
@@ -320,6 +368,7 @@ function UserTable({
           <TableHead className="font-semibold">Email</TableHead>
           <TableHead className="font-semibold">Role</TableHead>
           <TableHead className="font-semibold">Change Role</TableHead>
+          <TableHead className="font-semibold">Test Mode</TableHead>
           <TableHead className="font-semibold">Actions</TableHead>
         </TableRow>
       </TableHeader>
@@ -376,6 +425,14 @@ function UserTable({
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
+            </TableCell>
+            <TableCell>
+              <TestModeToggle
+                userId={user.id}
+                userName={`${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.email || "User"}
+                enabled={testModeOverrides[user.id] ?? (user as any).testModeEnabled ?? false}
+                onChanged={(enabled) => setTestModeOverrides((prev) => ({ ...prev, [user.id]: enabled }))}
+              />
             </TableCell>
             <TableCell>
               <div className="flex items-center gap-1">

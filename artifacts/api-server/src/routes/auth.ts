@@ -64,6 +64,7 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
     email: authUser?.email ?? null,
     internalEmail: profile.internal_email ?? null,
     uniqueStudentId: profile.unique_student_id ?? null,
+    testModeEnabled: profile.test_mode_enabled ?? false,
   });
 });
 

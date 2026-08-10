@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Eye, X } from "lucide-react";
-import { getImpersonationTarget, returnToAdmin, type ImpersonationTarget } from "@/lib/impersonation";
+import { getImpersonationTarget, returnToOrigin, type ImpersonationTarget } from "@/lib/impersonation";
 
 const ROLE_LABELS: Record<string, string> = {
   teacher: "Teacher",
@@ -28,7 +28,7 @@ export function ImpersonationBanner() {
         onClick={async () => {
           setReturning(true);
           try {
-            await returnToAdmin();
+            await returnToOrigin();
           } finally {
             setReturning(false);
           }
@@ -37,7 +37,7 @@ export function ImpersonationBanner() {
         className="ml-2 inline-flex items-center gap-1 bg-amber-950/10 hover:bg-amber-950/20 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-60"
       >
         <X className="w-3.5 h-3.5" />
-        {returning ? "Returning…" : "Return to Admin"}
+        {returning ? "Returning…" : "Return to My Account"}
       </button>
     </div>
   );

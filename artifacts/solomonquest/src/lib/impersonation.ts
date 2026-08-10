@@ -15,27 +15,35 @@ function dashboardPathFor(role: string): string {
 }
 
 /**
- * Starts a "view as" session: mints a real Supabase session for the target
- * user (via a server-generated magic-link OTP, redeemed here) so every
- * existing fetch/query in the app works unmodified once the client swaps to
- * it — no per-page auth plumbing needed. The admin's own session is saved
- * first so `returnToAdmin` can restore it later.
+ * Starts a "view as" / Test Mode session: mints a real Supabase session for
+ * the target user (via a server-generated magic-link OTP, redeemed here) so
+ * every existing fetch/query in the app works unmodified once the client
+ * swaps to it — no per-page auth plumbing needed. The caller's own session
+ * (and role, so we know where to send them back) is saved first so
+ * `returnToOrigin` can restore it later. Works both for an admin using
+ * "View As" and for any user an admin has granted test_mode_enabled to.
  */
 export async function startImpersonation(userId: string): Promise<void> {
-  const { data: { session: adminSession } } = await supabase.auth.getSession();
-  if (!adminSession) throw new Error("Not signed in");
+  const { data: { session: originSession } } = await supabase.auth.getSession();
+  if (!originSession) throw new Error("Not signed in");
 
-  const res = await fetch(`/api/admin/impersonate/${userId}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${adminSession.access_token}` },
-  });
+  const [impersonateRes, meRes] = await Promise.all([
+    fetch(`/api/admin/impersonate/${userId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${originSession.access_token}` },
+    }),
+    fetch(`/api/auth/me`, {
+      headers: { Authorization: `Bearer ${originSession.access_token}` },
+    }),
+  ]);
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
+  if (!impersonateRes.ok) {
+    const body = await impersonateRes.json().catch(() => ({}));
     throw new Error(body.error ?? "Failed to start view-as session");
   }
 
-  const { emailOtp, targetUser } = await res.json();
+  const { emailOtp, targetUser } = await impersonateRes.json();
+  const originRole: string = meRes.ok ? (await meRes.json())?.role ?? "student" : "student";
 
   const { error: verifyError } = await supabase.auth.verifyOtp({
     type: "email",
@@ -46,8 +54,9 @@ export async function startImpersonation(userId: string): Promise<void> {
   sessionStorage.setItem(
     ADMIN_SESSION_KEY,
     JSON.stringify({
-      access_token: adminSession.access_token,
-      refresh_token: adminSession.refresh_token,
+      access_token: originSession.access_token,
+      refresh_token: originSession.refresh_token,
+      originRole,
     })
   );
   sessionStorage.setItem(TARGET_KEY, JSON.stringify(targetUser as ImpersonationTarget));
@@ -65,18 +74,19 @@ export function getImpersonationTarget(): ImpersonationTarget | null {
   }
 }
 
-/** Restores the admin's own session and clears view-as state. */
-export async function returnToAdmin(): Promise<void> {
+/** Restores the original account's session and clears view-as state. */
+export async function returnToOrigin(): Promise<void> {
   const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
   sessionStorage.removeItem(ADMIN_SESSION_KEY);
   sessionStorage.removeItem(TARGET_KEY);
 
   if (!raw) {
-    window.location.href = "/dashboard/admin";
+    window.location.href = "/";
     return;
   }
 
-  const { access_token, refresh_token } = JSON.parse(raw);
+  const { access_token, refresh_token, originRole } = JSON.parse(raw);
   await supabase.auth.setSession({ access_token, refresh_token });
-  window.location.href = "/dashboard/admin";
+  window.location.href =
+    originRole === "admin" || originRole === "super_admin" ? "/dashboard/admin" : dashboardPathFor(originRole);
 }

@@ -8,6 +8,7 @@ import { Router } from "@/Router";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { NotesProvider } from "@/components/notes/NotesContext";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
+import { TestModeSwitcher } from "@/components/TestModeSwitcher";
 
 export const queryClient = new QueryClient();
 
@@ -63,6 +64,7 @@ function App() {
               <NotesProvider>
                 <ImpersonationBanner />
                 <Router />
+                <TestModeSwitcher />
                 <Toaster />
               </NotesProvider>
             </AuthProvider>

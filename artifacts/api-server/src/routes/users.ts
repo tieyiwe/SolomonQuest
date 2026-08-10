@@ -619,8 +619,57 @@ function mapProfile(p: Record<string, unknown>, email?: string | null) {
     email: email ?? null,
     internalEmail: p.internal_email ?? null,
     uniqueStudentId: p.unique_student_id ?? null,
+    testModeEnabled: p.test_mode_enabled ?? false,
   };
 }
+
+// PATCH /users/:id/test-mode — admin/super_admin only, same-school scoped.
+// Grants (or revokes) a user the ability to self-switch into other
+// teacher/staff/student accounts via POST /admin/impersonate for testing,
+// without needing an admin to trigger "View As" for them each time.
+router.patch("/users/:id/test-mode", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.userRole !== "admin" && req.userRole !== "super_admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const { enabled } = req.body as { enabled?: boolean };
+
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+
+  const { data: target } = await supabaseAdmin
+    .from("profiles")
+    .select("school_id")
+    .eq("id", id)
+    .single();
+
+  if (!target) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+  if (target.school_id !== req.schoolId && req.userRole !== "super_admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .update({ test_mode_enabled: enabled })
+    .eq("id", id)
+    .select("id, test_mode_enabled")
+    .single();
+
+  if (error || !data) {
+    res.status(500).json({ error: error?.message ?? "Failed to update test mode" });
+    return;
+  }
+
+  res.json({ id: data.id, testModeEnabled: data.test_mode_enabled });
+});
 
 // POST /users/:id/reset-password - admin sends password reset email to user
 router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
