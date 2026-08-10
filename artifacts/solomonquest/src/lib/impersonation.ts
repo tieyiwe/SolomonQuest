@@ -64,6 +64,20 @@ export async function startImpersonation(userId: string): Promise<void> {
   window.location.href = dashboardPathFor(targetUser.role);
 }
 
+/**
+ * Drops any saved "viewing as" state without restoring a session — used
+ * when someone signs in normally (e.g. the login form). Without this, a
+ * stale sq_impersonation_target left over from a session that ended
+ * without clicking "Return to My Account" (tab closed, session expired,
+ * signed out directly) would make the banner reappear showing "Viewing
+ * as <old target>" on top of a completely fresh login, even though the
+ * new session correctly is the admin/super_admin account.
+ */
+export function clearImpersonationState(): void {
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  sessionStorage.removeItem(TARGET_KEY);
+}
+
 export function getImpersonationTarget(): ImpersonationTarget | null {
   const raw = sessionStorage.getItem(TARGET_KEY);
   if (!raw) return null;

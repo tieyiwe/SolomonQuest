@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Loader2, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { clearImpersonationState } from "@/lib/impersonation";
 
 const loginSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -75,9 +76,15 @@ export default function Login() {
 
       if (error) throw error;
 
+      // A fresh login always takes over as this account, regardless of
+      // whatever "View As" / Test Mode state a previous session on this
+      // browser left behind (e.g. the tab was closed mid-impersonation
+      // instead of clicking "Return to My Account").
+      clearImpersonationState();
+
       try {
         const token = authData.session?.access_token;
-        const res = await fetch("/api/me", {
+        const res = await fetch("/api/auth/me", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {

@@ -3,6 +3,7 @@ import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { useGetMe, setAuthTokenGetter } from "@workspace/api-client-react";
 import { logActivity } from "@/lib/activityLogger";
+import { clearImpersonationState } from "@/lib/impersonation";
 import type { Profile } from "@workspace/api-client-react/src/generated/api.schemas";
 import { useLocation } from "wouter";
 import { queryClient } from "@/App";
@@ -69,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     try { await logActivity({ action: "logout" }); } catch { /* non-blocking */ }
     await supabase.auth.signOut();
+    clearImpersonationState();
     queryClient.clear();
     setLocation("/auth/login");
   };
