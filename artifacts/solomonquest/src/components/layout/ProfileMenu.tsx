@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link } from "wouter";
+import { SchoolSwitcherDialog } from "@/components/SchoolSwitcherDialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -15,6 +17,7 @@ import {
   Bell,
   Settings,
   Shield,
+  Building2,
 } from "lucide-react";
 
 function getInitials(firstName?: string | null, lastName?: string | null) {
@@ -32,11 +35,14 @@ function profileLink(_role?: string | null) {
 
 export function ProfileMenu() {
   const { user, signOut } = useAuth();
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const initials = getInitials(user?.firstName, user?.lastName);
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User";
+  const canSwitchSchools = user?.role === "admin" || user?.role === "staff";
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger className="rounded-full outline-none hover:opacity-90 transition-opacity focus-visible:ring-2 focus-visible:ring-primary">
         <Avatar className="h-8 w-8 border-2 border-primary/20 shadow-sm cursor-pointer">
@@ -103,6 +109,13 @@ export function ProfileMenu() {
           </Link>
         )}
 
+        {canSwitchSchools && (
+          <DropdownMenuItem className="cursor-pointer gap-2" onClick={() => setSwitcherOpen(true)}>
+            <Building2 className="h-4 w-4 text-gray-500" />
+            <span>Switch School</span>
+          </DropdownMenuItem>
+        )}
+
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
@@ -114,5 +127,13 @@ export function ProfileMenu() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    {canSwitchSchools && (
+      <SchoolSwitcherDialog
+        open={switcherOpen}
+        onOpenChange={setSwitcherOpen}
+        currentSchoolId={(user as any)?.schoolId}
+      />
+    )}
+    </>
   );
 }
