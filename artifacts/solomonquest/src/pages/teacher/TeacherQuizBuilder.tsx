@@ -576,18 +576,53 @@ function QuizDetail({ quiz, onPublished }: QuizDetailProps) {
     }
   };
 
+  // The backend's quiz_questions table (and everything that reads it — quiz
+  // taking, auto-grading) speaks a different shape than this component's
+  // local Question state: `question` not `text`, `correct_answer` not
+  // `correctAnswer`, options carry `is_correct` not `isCorrect`, and for
+  // multiple_choice the graded "submitted answer" is the chosen option's id
+  // while for true_false it's the literal string "True"/"False" (see
+  // StudentQuizTake.tsx's MultipleChoiceInput/TrueFalseInput). Translate here
+  // rather than changing the local shape everywhere it's used for editing.
+  const toApiPayload = (q: Question) => {
+    const options = q.options.map((o) => ({ id: o.id, text: o.text, is_correct: o.isCorrect }));
+    let correctAnswer: string | null = null;
+    if (q.type === "multiple_choice") {
+      correctAnswer = q.options.find((o) => o.isCorrect)?.id ?? null;
+    } else if (q.type === "true_false") {
+      correctAnswer = q.options.find((o) => o.isCorrect)?.text ?? null;
+    } else {
+      correctAnswer = q.correctAnswer ?? null;
+    }
+    return {
+      type: q.type,
+      question: q.text,
+      options: q.options.length > 0 ? options : null,
+      correct_answer: correctAnswer,
+      points: q.points,
+    };
+  };
+
   const addQuestion = async (type: QuestionType) => {
     const q = makeQuestion(type);
     setSavingQuestion(true);
     try {
       const res = await apiFetch(`/api/quizzes/${quiz.id}/questions`, {
         method: "POST",
-        body: JSON.stringify(q),
+        body: JSON.stringify(toApiPayload(q)),
       });
-      const saved = res.ok ? await res.json() : q;
-      setQuestions((prev) => [...prev, { ...q, ...saved }]);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Failed to add question");
+        return;
+      }
+      const saved = await res.json();
+      // Keep the local (camelCase, isCorrect-based) shape for editing, but
+      // adopt the server-assigned id so later PUT/DELETE calls target the
+      // real row instead of the client-generated placeholder id.
+      setQuestions((prev) => [...prev, { ...q, id: saved.id ?? q.id }]);
     } catch {
-      setQuestions((prev) => [...prev, q]);
+      toast.error("Failed to add question");
     } finally {
       setSavingQuestion(false);
       setAddingType(null);
@@ -597,12 +632,16 @@ function QuizDetail({ quiz, onPublished }: QuizDetailProps) {
   const updateQuestion = async (index: number, updated: Question) => {
     setQuestions((prev) => prev.map((q, i) => (i === index ? updated : q)));
     try {
-      await apiFetch(`/api/quizzes/${quiz.id}/questions/${updated.id}`, {
+      const res = await apiFetch(`/api/quizzes/${quiz.id}/questions/${updated.id}`, {
         method: "PUT",
-        body: JSON.stringify(updated),
+        body: JSON.stringify(toApiPayload(updated)),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Failed to save question");
+      }
     } catch {
-      // ignore
+      toast.error("Failed to save question");
     }
   };
 

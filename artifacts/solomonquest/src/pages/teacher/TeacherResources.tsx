@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { TeacherLayout } from "@/components/layout/TeacherLayout";
 import { useGetMyCourses } from "@workspace/api-client-react";
@@ -45,6 +45,30 @@ interface Resource {
   createdAt: string;
 }
 
+/** Raw shape returned by GET/POST /courses/:courseId/resources. */
+interface RawResource {
+  id: string;
+  title: string;
+  resource_type: "file" | "link" | "video" | "document";
+  file_url: string | null;
+  external_url: string | null;
+  section: string | null;
+  created_at: string;
+}
+
+function mapResource(r: RawResource, courseId: string, courseName: string): Resource {
+  return {
+    id: r.id,
+    title: r.title,
+    url: r.file_url ?? r.external_url ?? "",
+    type: r.file_url ? "file" : "link",
+    section: r.section ?? undefined,
+    courseId,
+    courseName,
+    createdAt: r.created_at,
+  };
+}
+
 export default function TeacherResources() {
   const { session } = useAuth();
   const { data: courses, isLoading: isCoursesLoading } = useGetMyCourses();
@@ -59,6 +83,40 @@ export default function TeacherResources() {
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [resources, setResources] = useState<Resource[]>([]);
+  const [isLoadingResources, setIsLoadingResources] = useState(false);
+
+  // Aggregates resources across every course the teacher owns — there's no
+  // single "all my resources" endpoint, so fetch each course's resources in
+  // parallel and merge. This also fixes the page never loading anything at
+  // all: it previously only ever showed resources added in the current tab
+  // session (nothing was ever fetched from the server).
+  const loadResources = useCallback(async () => {
+    if (!courses || courses.length === 0) return;
+    setIsLoadingResources(true);
+    try {
+      const results = await Promise.all(
+        courses.map(async (course) => {
+          const res = await fetch(`/api/courses/${course.id}/resources`, {
+            headers: { Authorization: `Bearer ${session?.access_token}` },
+          });
+          if (!res.ok) return [];
+          const data: RawResource[] = await res.json();
+          return data.map((r) => mapResource(r, course.id, course.title));
+        })
+      );
+      setResources(
+        results.flat().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      );
+    } catch {
+      toast.error("Failed to load resources");
+    } finally {
+      setIsLoadingResources(false);
+    }
+  }, [courses, session?.access_token]);
+
+  useEffect(() => {
+    loadResources();
+  }, [loadResources]);
 
   const handleAddLink = async () => {
     if (!resourceTitle.trim()) { toast.error("Please enter a resource title"); return; }
@@ -67,7 +125,7 @@ export default function TeacherResources() {
 
     setIsUploading(true);
     try {
-      await fetch(`/api/courses/${resourceCourseId}/resources`, {
+      const res = await fetch(`/api/courses/${resourceCourseId}/resources`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -75,26 +133,22 @@ export default function TeacherResources() {
         },
         body: JSON.stringify({
           title: resourceTitle,
-          url: resourceUrl,
-          type: "link",
+          resourceType: "link",
+          externalUrl: resourceUrl,
           section: resourceSection || undefined,
+          isPublished: true,
         }),
       });
 
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error ?? "Failed to add resource");
+        return;
+      }
+
+      const saved: RawResource = await res.json();
       const courseName = courses?.find((c) => c.id === resourceCourseId)?.title || "";
-      setResources((prev) => [
-        {
-          id: Math.random().toString(36).slice(2),
-          title: resourceTitle,
-          url: resourceUrl,
-          type: "link",
-          section: resourceSection || undefined,
-          courseId: resourceCourseId,
-          courseName,
-          createdAt: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
+      setResources((prev) => [mapResource(saved, resourceCourseId, courseName), ...prev]);
       toast.success("Resource added");
       setResourceTitle("");
       setResourceUrl("");
@@ -121,7 +175,7 @@ export default function TeacherResources() {
       const { data: publicData } = supabase.storage.from("course-resources").getPublicUrl(data.path);
 
       const title = resourceTitle || file.name;
-      await fetch(`/api/courses/${resourceCourseId}/resources`, {
+      const res = await fetch(`/api/courses/${resourceCourseId}/resources`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -129,26 +183,21 @@ export default function TeacherResources() {
         },
         body: JSON.stringify({
           title,
-          url: publicData.publicUrl,
-          type: "file",
+          resourceType: "file",
+          fileUrl: publicData.publicUrl,
           section: resourceSection || undefined,
+          isPublished: true,
         }),
       });
 
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to save resource");
+      }
+
+      const saved: RawResource = await res.json();
       const courseName = courses?.find((c) => c.id === resourceCourseId)?.title || "";
-      setResources((prev) => [
-        {
-          id: Math.random().toString(36).slice(2),
-          title,
-          url: publicData.publicUrl,
-          type: "file",
-          section: resourceSection || undefined,
-          courseId: resourceCourseId,
-          courseName,
-          createdAt: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
+      setResources((prev) => [mapResource(saved, resourceCourseId, courseName), ...prev]);
       toast.success("File uploaded successfully");
       setResourceTitle("");
       setResourceSection("");
@@ -166,9 +215,20 @@ export default function TeacherResources() {
     if (file) handleFileUpload(file);
   };
 
-  const removeResource = (id: string) => {
-    setResources((prev) => prev.filter((r) => r.id !== id));
-    toast.success("Resource removed");
+  const removeResource = async (resource: Resource) => {
+    const prev = resources;
+    setResources((p) => p.filter((r) => r.id !== resource.id));
+    try {
+      const res = await fetch(`/api/courses/${resource.courseId}/resources/${resource.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Resource removed");
+    } catch {
+      setResources(prev);
+      toast.error("Failed to remove resource");
+    }
   };
 
   const filteredResources =
@@ -447,7 +507,7 @@ export default function TeacherResources() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                onClick={() => removeResource(resource.id)}
+                                onClick={() => removeResource(resource)}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
@@ -469,7 +529,7 @@ export default function TeacherResources() {
                       ? "Use the form on the left to upload files or add links for your students."
                       : "No resources added for this course yet."}
                   </p>
-                  {isCoursesLoading && (
+                  {(isCoursesLoading || isLoadingResources) && (
                     <div className="mt-4 space-y-2">
                       {[1, 2, 3].map((i) => (
                         <Skeleton key={i} className="h-14 w-full rounded-lg" />

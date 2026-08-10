@@ -5,6 +5,47 @@ import { sendResourceNotification } from "../lib/email";
 
 const router: IRouter = Router({ mergeParams: true });
 
+function isTeacherOrAdmin(role?: string): boolean {
+  return role === "teacher" || role === "admin" || role === "super_admin";
+}
+
+/**
+ * Confirms the caller may modify resources on this course: a teacher must
+ * own the course, an admin/super_admin must be in the same school (or be
+ * super_admin, which spans schools). Previously there was no ownership
+ * check at all here — any authenticated teacher/admin could add, edit, or
+ * delete resources on ANY course in ANY school just by guessing/knowing its
+ * id, a cross-tenant IDOR.
+ */
+async function assertCanManageCourseResources(
+  courseId: string,
+  userId: string,
+  role: string | undefined
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const { data: course } = await supabaseAdmin
+    .from("courses")
+    .select("teacher_id, school_id")
+    .eq("id", courseId)
+    .single();
+
+  if (!course) return { ok: false, status: 404, error: "Course not found" };
+  if (role === "super_admin") return { ok: true };
+  if (role === "teacher") {
+    return course.teacher_id === userId
+      ? { ok: true }
+      : { ok: false, status: 403, error: "You do not teach this course" };
+  }
+  // admin
+  const { data: caller } = await supabaseAdmin
+    .from("profiles")
+    .select("school_id")
+    .eq("id", userId)
+    .single();
+  return caller?.school_id === course.school_id
+    ? { ok: true }
+    : { ok: false, status: 403, error: "Forbidden" };
+}
+
 // GET /courses/:courseId/resources
 router.get(
   "/courses/:courseId/resources",
@@ -20,7 +61,7 @@ router.get(
       .order("created_at", { ascending: false });
 
     // Students only see published resources; teachers/admins see drafts too.
-    if (req.userRole !== "teacher" && req.userRole !== "admin") {
+    if (!isTeacherOrAdmin(req.userRole)) {
       query = query.eq("is_published", true);
     }
 
@@ -45,12 +86,19 @@ router.post(
   requireAuth,
   async (req: AuthenticatedRequest, res): Promise<void> => {
     const role = req.userRole;
-    if (role !== "teacher" && role !== "admin") {
+    if (!isTeacherOrAdmin(role)) {
       res.status(403).json({ error: "Forbidden: teacher or admin only" });
       return;
     }
 
     const { courseId } = req.params;
+
+    const access = await assertCanManageCourseResources(courseId, req.userId!, role);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+
     const { title, description, resourceType, fileUrl, externalUrl, section, isPublished } =
       req.body;
 
@@ -109,12 +157,19 @@ router.patch(
   requireAuth,
   async (req: AuthenticatedRequest, res): Promise<void> => {
     const role = req.userRole;
-    if (role !== "teacher" && role !== "admin") {
+    if (!isTeacherOrAdmin(role)) {
       res.status(403).json({ error: "Forbidden: teacher or admin only" });
       return;
     }
 
     const { courseId, id } = req.params;
+
+    const access = await assertCanManageCourseResources(courseId, req.userId!, role);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+
     const { title, description, resourceType, fileUrl, externalUrl, section, isPublished } = req.body;
 
     const { data: existing } = await supabaseAdmin
@@ -173,7 +228,7 @@ async function notifyStudentsOfResource(
   resourceType: string
 ) {
   const { data: enrollments, error: enrollError } = await supabaseAdmin
-    .from("enrollments")
+    .from("course_enrollments")
     .select("student_id")
     .eq("course_id", courseId)
     .eq("status", "active");
@@ -256,17 +311,24 @@ router.delete(
   requireAuth,
   async (req: AuthenticatedRequest, res): Promise<void> => {
     const role = req.userRole;
-    if (role !== "teacher" && role !== "admin") {
+    if (!isTeacherOrAdmin(role)) {
       res.status(403).json({ error: "Forbidden: teacher or admin only" });
       return;
     }
 
-    const { id } = req.params;
+    const { courseId, id } = req.params;
+
+    const access = await assertCanManageCourseResources(courseId, req.userId!, role);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
 
     const { error } = await supabaseAdmin
       .from("course_resources")
       .delete()
-      .eq("id", id);
+      .eq("id", id)
+      .eq("course_id", courseId);
 
     if (error) {
       res.status(404).json({ error: "Resource not found" });
