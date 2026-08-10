@@ -390,6 +390,12 @@ function HeroCarousel({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+function dashboardPathFor(role?: string | null): string {
+  if (role === "admin" || role === "super_admin") return "/dashboard/admin";
+  if (role === "teacher") return "/dashboard/teacher";
+  return "/dashboard/student"; // staff and student share the student dashboard
+}
+
 export default function SchoolPublicPage() {
   const [, params] = useRoute("/schools/:slug");
   const slug = params?.slug ?? "";
@@ -580,6 +586,21 @@ export default function SchoolPublicPage() {
             <a href="#apply" className="text-gray-600 hover:text-gray-900 text-sm font-medium transition-colors">
               Apply
             </a>
+            {user ? (
+              <Link
+                href={dashboardPathFor((user as any)?.role)}
+                className="text-gray-600 hover:text-gray-900 text-sm font-medium transition-colors"
+              >
+                Dashboard
+              </Link>
+            ) : (
+              <Link
+                href="/auth/login"
+                className="text-gray-600 hover:text-gray-900 text-sm font-medium transition-colors"
+              >
+                Sign In
+              </Link>
+            )}
             <button
               onClick={handleApply}
               className="px-4 py-2 rounded-lg text-white text-sm font-semibold hover:opacity-90 transition-opacity"
@@ -619,6 +640,23 @@ export default function SchoolPublicPage() {
             <a href="#apply" className="text-gray-700 font-medium" onClick={() => setMobileMenuOpen(false)}>
               Apply
             </a>
+            {user ? (
+              <Link
+                href={dashboardPathFor((user as any)?.role)}
+                className="text-gray-700 font-medium"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Dashboard
+              </Link>
+            ) : (
+              <Link
+                href="/auth/login"
+                className="text-gray-700 font-medium"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Sign In
+              </Link>
+            )}
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
