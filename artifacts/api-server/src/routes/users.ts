@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { sendPasswordResetEmail } from "../lib/email";
+import { notifyUsers } from "../lib/notifications";
 
 const router: IRouter = Router();
 
@@ -671,8 +672,23 @@ router.patch("/users/:id/test-mode", requireAuth, async (req: AuthenticatedReque
     .single();
 
   if (error || !data) {
-    res.status(500).json({ error: error?.message ?? "Failed to update test mode" });
+    const missingColumn = error?.message?.toLowerCase().includes("test_mode_enabled");
+    res.status(500).json({
+      error: missingColumn
+        ? "Test Mode isn't set up on this database yet — run the latest supabase-schema-additions.sql."
+        : error?.message ?? "Failed to update test mode",
+    });
     return;
+  }
+
+  if (enabled) {
+    notifyUsers({
+      userIds: [id],
+      type: "test_mode_enabled",
+      category: "platform",
+      title: "Test Mode enabled for your account",
+      body: "An admin has enabled Test Mode for you — look for \"Switch Profile\" to try out other account views for testing.",
+    }).catch(() => {});
   }
 
   res.json({ id: data.id, testModeEnabled: data.test_mode_enabled });

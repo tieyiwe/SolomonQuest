@@ -162,13 +162,18 @@ function TestModeToggle({
         },
         body: JSON.stringify({ enabled: next }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update Test Mode");
+      }
       toast.success(
-        next ? `Test Mode enabled for ${userName}` : `Test Mode disabled for ${userName}`
+        next
+          ? `Test Mode enabled for ${userName} — they've been notified`
+          : `Test Mode disabled for ${userName}`
       );
-    } catch {
+    } catch (err: any) {
       onChanged(!next);
-      toast.error("Failed to update Test Mode");
+      toast.error(err.message || "Failed to update Test Mode");
     } finally {
       setLoading(false);
     }
