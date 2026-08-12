@@ -68,6 +68,45 @@ router.post("/assignments/:assignmentId/submissions", requireAuth, async (req: A
     ? req.params.assignmentId[0]
     : req.params.assignmentId;
 
+  // Security: this previously had NO check at all — any authenticated user
+  // (any role, any school) could upsert a "submission" against any
+  // assignment id, including ones in other schools or not yet published,
+  // polluting gradebooks/analytics with fake rows. Only the enrolled
+  // student themselves may submit, and only against a published
+  // assignment they're actively enrolled in.
+  if (req.userRole !== "student") {
+    res.status(403).json({ error: "Only students can submit assignments" });
+    return;
+  }
+
+  const { data: assignment } = await supabaseAdmin
+    .from("assignments")
+    .select("id, course_id, is_published")
+    .eq("id", assignmentId)
+    .single();
+
+  if (!assignment) {
+    res.status(404).json({ error: "Assignment not found" });
+    return;
+  }
+  if (!assignment.is_published) {
+    res.status(403).json({ error: "This assignment is not yet published" });
+    return;
+  }
+
+  const { data: enrollment } = await supabaseAdmin
+    .from("course_enrollments")
+    .select("course_id")
+    .eq("course_id", assignment.course_id as string)
+    .eq("student_id", req.userId ?? "")
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (!enrollment) {
+    res.status(403).json({ error: "You are not enrolled in this course" });
+    return;
+  }
+
   const { content } = req.body;
 
   // Upsert submission

@@ -8,6 +8,51 @@ function isTeacherOrAdmin(role?: string): boolean {
   return role === "teacher" || role === "admin" || role === "super_admin";
 }
 
+/**
+ * Confirms the caller may manage the quiz's course: a teacher must own it,
+ * an admin must be in the same school, super_admin always passes. Every
+ * mutation route in this file previously checked only the caller's ROLE
+ * ("is this a teacher or admin?"), never that the quiz's course actually
+ * belonged to them — any teacher/admin account in any school could edit
+ * questions (including correct_answer), delete, or publish/unpublish any
+ * OTHER school's quiz just by knowing/guessing its id.
+ */
+async function assertCanManageQuiz(
+  quizIdParam: string | string[],
+  userId: string | undefined,
+  role: string | undefined
+): Promise<{ ok: true; courseId: string } | { ok: false; status: number; error: string }> {
+  const quizId = Array.isArray(quizIdParam) ? quizIdParam[0] : quizIdParam;
+  const { data: quiz } = await supabaseAdmin
+    .from("quizzes")
+    .select("course_id")
+    .eq("id", quizId)
+    .single();
+  if (!quiz) return { ok: false, status: 404, error: "Quiz not found" };
+
+  const { data: course } = await supabaseAdmin
+    .from("courses")
+    .select("teacher_id, school_id")
+    .eq("id", quiz.course_id as string)
+    .single();
+  if (!course) return { ok: false, status: 404, error: "Course not found" };
+
+  if (role === "super_admin") return { ok: true, courseId: quiz.course_id as string };
+  if (role === "admin") {
+    const { data: caller } = await supabaseAdmin
+      .from("profiles")
+      .select("school_id")
+      .eq("id", userId ?? "")
+      .single();
+    return caller?.school_id === course.school_id
+      ? { ok: true, courseId: quiz.course_id as string }
+      : { ok: false, status: 403, error: "Forbidden" };
+  }
+  return course.teacher_id === userId
+    ? { ok: true, courseId: quiz.course_id as string }
+    : { ok: false, status: 403, error: "You do not teach this course" };
+}
+
 // ---------------------------------------------------------------------------
 // GET /quizzes?course_id=X - list quizzes for a course
 // ---------------------------------------------------------------------------
@@ -132,6 +177,13 @@ router.put("/quizzes/:id", requireAuth, async (req: AuthenticatedRequest, res): 
   }
 
   const { id } = req.params;
+
+  const access = await assertCanManageQuiz(id, req.userId, req.userRole);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+
   const {
     title,
     description,
@@ -187,6 +239,12 @@ router.delete("/quizzes/:id", requireAuth, async (req: AuthenticatedRequest, res
 
   const { id } = req.params;
 
+  const access = await assertCanManageQuiz(id, req.userId, req.userRole);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+
   try {
     const { error } = await supabaseAdmin.from("quizzes").delete().eq("id", id);
 
@@ -214,6 +272,13 @@ router.post(
     }
 
     const { id } = req.params;
+
+    const access = await assertCanManageQuiz(id, req.userId, req.userRole);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+
     const { type, question, options, correct_answer, points, order_index } = req.body;
 
     if (!type || !question) {
@@ -261,6 +326,13 @@ router.put(
     }
 
     const { id, qid } = req.params;
+
+    const access = await assertCanManageQuiz(id, req.userId, req.userRole);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+
     const { type, question, options, correct_answer, points, order_index } = req.body;
 
     const updates: Record<string, unknown> = {};
@@ -311,6 +383,12 @@ router.delete(
 
     const { id, qid } = req.params;
 
+    const access = await assertCanManageQuiz(id, req.userId, req.userRole);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
+
     try {
       const { error } = await supabaseAdmin
         .from("quiz_questions")
@@ -343,6 +421,12 @@ router.post(
     }
 
     const { id } = req.params;
+
+    const access = await assertCanManageQuiz(id, req.userId, req.userRole);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
 
     try {
       const { data, error } = await supabaseAdmin
@@ -680,6 +764,12 @@ router.get(
     }
 
     const { id } = req.params;
+
+    const access = await assertCanManageQuiz(id, req.userId, req.userRole);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
+    }
 
     try {
       // Fetch all submitted attempts

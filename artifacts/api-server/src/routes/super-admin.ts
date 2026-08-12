@@ -577,8 +577,12 @@ router.get(
       if (role) query = query.eq("role", role);
       if (school_id) query = query.eq("school_id", school_id);
       if (search) {
+        // See users.ts's /users/search for why this is stripped down to
+        // plain search characters — PostgREST's .or() filter string treats
+        // ',', '(', ')' as condition/grouping syntax.
+        const safeSearch = String(search).replace(/[^\p{L}\p{N}\s@._-]/gu, "").slice(0, 100);
         query = query.or(
-          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,internal_email.ilike.%${search}%`
+          `first_name.ilike.%${safeSearch}%,last_name.ilike.%${safeSearch}%,internal_email.ilike.%${safeSearch}%`
         );
       }
 

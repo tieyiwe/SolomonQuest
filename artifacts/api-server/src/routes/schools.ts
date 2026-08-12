@@ -236,11 +236,26 @@ router.put("/schools/:id/branding", requireAuth, async (req: AuthenticatedReques
   if (primary_color !== undefined) coreUpdates.primary_color = primary_color;
   if (secondary_color !== undefined) coreUpdates.secondary_color = secondary_color;
 
-  // Fetch existing branding JSONB and merge full body into it
+  // Fetch existing branding JSONB and merge the body into it — but only the
+  // fields this JSONB blob is actually meant to hold, not the raw body
+  // wholesale (that included things like `slug`/`logo_url` already handled
+  // as real columns above, and would silently persist any other key an
+  // admin's client happened to send).
+  const BRANDING_KEYS = [
+    "banner_slides", "hero_settings", "accent_color", "body_font",
+    "heading_font", "heading_text_color", "border_radius", "stats_visible", "stats",
+    "features", "testimonials", "show_announcement", "announcement_text",
+    "announcement_bg_color", "social_website", "social_facebook", "social_twitter",
+    "social_instagram", "social_linkedin", "social_youtube", "custom_css",
+  ];
   const { data: currentRow } = await supabaseAdmin
     .from("schools").select("branding").eq("id", id).single();
   const existingBranding = (currentRow?.branding as Record<string, unknown>) ?? {};
-  const mergedBranding = { ...existingBranding, ...body };
+  const brandingPatch: Record<string, unknown> = {};
+  for (const key of BRANDING_KEYS) {
+    if (body[key] !== undefined) brandingPatch[key] = body[key];
+  }
+  const mergedBranding = { ...existingBranding, ...brandingPatch };
 
   // Try saving with branding JSONB; fall back to core columns only if branding column missing
   let { data, error } = await supabaseAdmin

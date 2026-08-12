@@ -12,6 +12,42 @@ function isAdmin(role?: string): boolean {
   return role === "admin" || role === "super_admin";
 }
 
+/**
+ * Confirms the caller may manage this assignment's course: a teacher must
+ * own the course, an admin must be in the same school as it, super_admin
+ * always passes. Every admin-bypass check below previously only asked "is
+ * this caller an admin?" with no comparison to the course's own school —
+ * any school's admin could edit/delete/publish another school's
+ * assignments, or plant a new one, just by knowing/guessing the id.
+ */
+async function assertCanManageAssignmentCourse(
+  courseId: string,
+  userId: string | undefined,
+  role: string | undefined
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const { data: course } = await supabaseAdmin
+    .from("courses")
+    .select("teacher_id, school_id")
+    .eq("id", courseId)
+    .single();
+
+  if (!course) return { ok: false, status: 404, error: "Course not found" };
+  if (role === "super_admin") return { ok: true };
+  if (role === "admin") {
+    const { data: caller } = await supabaseAdmin
+      .from("profiles")
+      .select("school_id")
+      .eq("id", userId ?? "")
+      .single();
+    return caller?.school_id === course.school_id
+      ? { ok: true }
+      : { ok: false, status: 403, error: "Forbidden" };
+  }
+  return course.teacher_id === userId
+    ? { ok: true }
+    : { ok: false, status: 403, error: "You do not have permission to manage this assignment" };
+}
+
 // Pending assignments for current student
 router.get("/assignments/pending", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const userId = req.userId;
@@ -195,13 +231,10 @@ router.put("/assignments/:id", requireAuth, async (req: AuthenticatedRequest, re
     return;
   }
 
-  // Ownership check for teachers
-  if (!isAdmin(role)) {
-    const teacherId = (existing.courses as Record<string, unknown> | null)?.teacher_id;
-    if (teacherId !== userId) {
-      res.status(403).json({ error: "You do not have permission to update this assignment" });
-      return;
-    }
+  const access = await assertCanManageAssignmentCourse(existing.course_id as string, userId, role);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
   }
 
   const { title, description, due_date, points, file_url, instructions, assignment_type, video_url, require_full_watch, isPublished } = req.body;
@@ -262,12 +295,10 @@ router.delete("/assignments/:id", requireAuth, async (req: AuthenticatedRequest,
     return;
   }
 
-  if (!isAdmin(role)) {
-    const teacherId = (existing.courses as Record<string, unknown> | null)?.teacher_id;
-    if (teacherId !== userId) {
-      res.status(403).json({ error: "You do not have permission to delete this assignment" });
-      return;
-    }
+  const access = await assertCanManageAssignmentCourse(existing.course_id as string, userId, role);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
   }
 
   const { error } = await supabaseAdmin.from("assignments").delete().eq("id", id);
@@ -311,16 +342,10 @@ router.post(
       return;
     }
 
-    if (!isAdmin(req.userRole)) {
-      const { data: course } = await supabaseAdmin
-        .from("courses")
-        .select("teacher_id")
-        .eq("id", courseId)
-        .single();
-      if (!course || course.teacher_id !== req.userId) {
-        res.status(403).json({ error: "You do not have permission to add assignments to this course" });
-        return;
-      }
+    const access = await assertCanManageAssignmentCourse(courseId, req.userId, req.userRole);
+    if (!access.ok) {
+      res.status(access.status).json({ error: access.error });
+      return;
     }
 
     const body = req.body ?? {};
@@ -376,16 +401,22 @@ router.post(
 );
 
 // Get assignment
-router.get("/assignments/:id", requireAuth, async (req, res): Promise<void> => {
+router.get("/assignments/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
   const { data, error } = await supabaseAdmin
     .from("assignments")
-    .select("*")
+    .select("*, courses(school_id)")
     .eq("id", id)
     .single();
 
   if (error || !data) {
+    res.status(404).json({ error: "Assignment not found" });
+    return;
+  }
+
+  const courseSchoolId = (data.courses as Record<string, unknown> | null)?.school_id;
+  if (req.userRole !== "super_admin" && courseSchoolId !== req.schoolId) {
     res.status(404).json({ error: "Assignment not found" });
     return;
   }
@@ -409,12 +440,10 @@ router.patch("/assignments/:id", requireAuth, async (req: AuthenticatedRequest, 
     return;
   }
 
-  if (!isAdmin(req.userRole)) {
-    const teacherId = (existing.courses as Record<string, unknown> | null)?.teacher_id;
-    if (teacherId !== req.userId) {
-      res.status(403).json({ error: "You do not have permission to update this assignment" });
-      return;
-    }
+  const access = await assertCanManageAssignmentCourse(existing.course_id as string, req.userId, req.userRole);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
   }
 
   const body = req.body ?? {};

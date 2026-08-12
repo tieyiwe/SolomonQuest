@@ -202,7 +202,12 @@ router.get("/users/search", requireAuth, async (req: AuthenticatedRequest, res):
   // No query yet: return everyone in the school, alphabetical by first name,
   // so the UI can show a browsable directory before the user types anything.
   if (queryParam) {
-    const q = queryParam.replace(/'/g, "");
+    // PostgREST's .or() filter string treats ',', '(', ')', and '.' as
+    // syntax (condition separators / grouping / operator delimiters) —
+    // stripping only quotes left those free for a search value to inject
+    // extra OR conditions or alter filter grouping. Strip anything that
+    // isn't a normal search character.
+    const q = queryParam.replace(/[^\p{L}\p{N}\s@._-]/gu, "").slice(0, 100);
     dbQuery = dbQuery.or(
       `unique_student_id.ilike.%${q}%,first_name.ilike.%${q}%,last_name.ilike.%${q}%,internal_email.ilike.%${q}%`
     );

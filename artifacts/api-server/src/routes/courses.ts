@@ -7,6 +7,45 @@ function canManageCourses(role: string | undefined): boolean {
   return role === "admin" || role === "super_admin" || role === "teacher";
 }
 
+/**
+ * Confirms the caller may modify/delete this specific course: a teacher
+ * must own it, an admin must be in the same school, super_admin always
+ * passes. Every write route below previously only checked the caller's
+ * ROLE, never that the course actually belonged to them — any teacher or
+ * admin in any school could edit/delete/enroll into any other school's
+ * course by id, a cross-tenant IDOR.
+ */
+async function assertCanManageCourse(
+  courseId: string,
+  userId: string | undefined,
+  role: string | undefined
+): Promise<{ ok: true; schoolId: string | null } | { ok: false; status: number; error: string }> {
+  const { data: course } = await supabaseAdmin
+    .from("courses")
+    .select("teacher_id, school_id")
+    .eq("id", courseId)
+    .single();
+
+  if (!course) return { ok: false, status: 404, error: "Course not found" };
+  if (role === "super_admin") return { ok: true, schoolId: course.school_id as string | null };
+  if (role === "teacher") {
+    return course.teacher_id === userId
+      ? { ok: true, schoolId: course.school_id as string | null }
+      : { ok: false, status: 403, error: "You do not teach this course" };
+  }
+  if (role === "admin") {
+    const { data: caller } = await supabaseAdmin
+      .from("profiles")
+      .select("school_id")
+      .eq("id", userId ?? "")
+      .single();
+    return caller?.school_id === course.school_id
+      ? { ok: true, schoolId: course.school_id as string | null }
+      : { ok: false, status: 403, error: "Forbidden" };
+  }
+  return { ok: false, status: 403, error: "Forbidden" };
+}
+
 const router: IRouter = Router();
 
 // Public: list a school's published courses for its public homepage —
@@ -156,7 +195,7 @@ router.post("/courses", requireAuth, async (req: AuthenticatedRequest, res): Pro
 });
 
 // Get single course
-router.get("/courses/:id", requireAuth, async (req, res): Promise<void> => {
+router.get("/courses/:id", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
   const { data, error } = await supabaseAdmin
@@ -166,6 +205,11 @@ router.get("/courses/:id", requireAuth, async (req, res): Promise<void> => {
     .single();
 
   if (error || !data) {
+    res.status(404).json({ error: "Course not found" });
+    return;
+  }
+
+  if (req.userRole !== "super_admin" && data.school_id !== req.schoolId) {
     res.status(404).json({ error: "Course not found" });
     return;
   }
@@ -181,6 +225,13 @@ router.patch("/courses/:id", requireAuth, async (req: AuthenticatedRequest, res)
   }
 
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+
+  const access = await assertCanManageCourse(id, req.userId, req.userRole);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+
   const { title, programId, teacherId, code, term, termStartDate, termEndDate, description, isPublished } = req.body;
 
   const updates: Record<string, unknown> = {};
@@ -217,6 +268,12 @@ router.delete("/courses/:id", requireAuth, async (req: AuthenticatedRequest, res
   }
 
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+
+  const access = await assertCanManageCourse(id, req.userId, req.userRole);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
 
   const { error } = await supabaseAdmin.from("courses").delete().eq("id", id);
 
@@ -306,12 +363,36 @@ router.get("/courses/:id/students", requireAuth, async (req: AuthenticatedReques
 });
 
 // Enroll student
-router.post("/courses/:id/enroll", requireAuth, async (req, res): Promise<void> => {
+router.post("/courses/:id/enroll", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const { studentId } = req.body;
 
+  if (!canManageCourses(req.userRole)) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
   if (!studentId) {
     res.status(400).json({ error: "studentId is required" });
+    return;
+  }
+
+  const access = await assertCanManageCourse(id, req.userId, req.userRole);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  // The student being enrolled must also belong to the same school as the
+  // course — otherwise a caller could enroll an arbitrary user from a
+  // different school into a course they're legitimately allowed to manage.
+  const { data: studentProfile } = await supabaseAdmin
+    .from("profiles")
+    .select("school_id")
+    .eq("id", studentId)
+    .single();
+  if (!studentProfile || studentProfile.school_id !== access.schoolId) {
+    res.status(403).json({ error: "That student is not in this course's school" });
     return;
   }
 
@@ -334,6 +415,13 @@ router.put("/courses/:id/live-settings", requireAuth, async (req: AuthenticatedR
   }
 
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+
+  const access = await assertCanManageCourse(id, req.userId, role);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+
   const { is_live, class_date, class_end_time } = req.body;
 
   const updates: Record<string, unknown> = {};

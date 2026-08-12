@@ -20,7 +20,7 @@ const DEFAULT_FEATURES = [
 ];
 
 // GET /permissions/my - get current user's permissions based on their role and school
-router.get("/my", requireAuth, async (req: AuthenticatedRequest, res) => {
+router.get("/permissions/my", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const user = req.user!;
 
@@ -69,7 +69,7 @@ router.get("/my", requireAuth, async (req: AuthenticatedRequest, res) => {
 });
 
 // GET /permissions?school_id=X - get all permissions for a school (admin only)
-router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
+router.get("/permissions", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const user = req.user!;
     const { school_id } = req.query;
@@ -80,7 +80,7 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("role")
+      .select("role, school_id")
       .eq("id", user.id)
       .single();
 
@@ -88,8 +88,15 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       return res.status(500).json({ error: profileError.message });
     }
 
-    if (!profile || profile.role !== "admin") {
+    if (!profile || (profile.role !== "admin" && profile.role !== "super_admin")) {
       return res.status(403).json({ error: "Forbidden: admin access required" });
+    }
+
+    // Non-super_admin admins may only view their OWN school's permissions —
+    // school_id was a raw, unchecked query param, letting any admin read
+    // another school's feature-gating config just by passing its id.
+    if (profile.role !== "super_admin" && profile.school_id !== school_id) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const { data: rolePermissions, error: permError } = await supabaseAdmin
@@ -118,7 +125,7 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
 });
 
 // PUT /permissions - upsert a permission (admin only)
-router.put("/", requireAuth, async (req: AuthenticatedRequest, res) => {
+router.put("/permissions", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const user = req.user!;
     const { school_id, role, feature, enabled } = req.body;
@@ -129,7 +136,7 @@ router.put("/", requireAuth, async (req: AuthenticatedRequest, res) => {
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("role")
+      .select("role, school_id")
       .eq("id", user.id)
       .single();
 
@@ -137,8 +144,14 @@ router.put("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       return res.status(500).json({ error: profileError.message });
     }
 
-    if (!profile || profile.role !== "admin") {
+    if (!profile || (profile.role !== "admin" && profile.role !== "super_admin")) {
       return res.status(403).json({ error: "Forbidden: admin access required" });
+    }
+
+    // Same fix as GET / above — an admin could otherwise silently rewrite
+    // another school's feature-gating config by passing its school_id.
+    if (profile.role !== "super_admin" && profile.school_id !== school_id) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const { data, error: upsertError } = await supabaseAdmin

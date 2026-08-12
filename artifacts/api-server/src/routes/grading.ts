@@ -100,11 +100,25 @@ router.put("/submissions/:id", requireAuth, async (req: AuthenticatedRequest, re
     const assignment = (submission as any).assignments;
     const course = assignment?.courses;
 
-    // Security: verify teacher owns the course, or requester is admin/super_admin
-    if (userRole !== "admin" && userRole !== "super_admin") {
-      if (userRole !== "teacher" || course?.teacher_id !== userId) {
+    // Security: verify teacher owns the course, admin is in the same school
+    // as it, or requester is super_admin. Previously an admin was trusted
+    // unconditionally with no school comparison — any school's admin could
+    // grade/overwrite feedback on any OTHER school's submissions.
+    if (userRole === "teacher") {
+      if (course?.teacher_id !== userId) {
         return res.status(403).json({ error: "Access denied: you do not own this course" });
       }
+    } else if (userRole === "admin") {
+      const { data: callerProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("school_id")
+        .eq("id", userId ?? "")
+        .single();
+      if (!callerProfile || callerProfile.school_id !== assignment?.school_id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    } else if (userRole !== "super_admin") {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const graded_at = new Date().toISOString();
