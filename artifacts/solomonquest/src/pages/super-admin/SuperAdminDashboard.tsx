@@ -1148,7 +1148,7 @@ export default function SuperAdminDashboard() {
                               <option value="teacher">teacher</option>
                               <option value="student">student</option>
                             </select>
-                            {(user.role === "teacher" || user.role === "staff" || user.role === "student") && (
+                            {(user.role === "teacher" || user.role === "staff" || user.role === "student" || user.role === "admin") && (
                               <Button
                                 size="sm"
                                 variant="outline"

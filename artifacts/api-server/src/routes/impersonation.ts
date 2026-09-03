@@ -6,8 +6,12 @@ import { logger } from "../lib/logger";
 const router: IRouter = Router();
 
 // Admins can preview the app as a teacher/student/staff account to check
-// what they'd see after a change — never as another admin or super_admin.
-const IMPERSONATABLE_ROLES = new Set(["teacher", "staff", "student"]);
+// what they'd see after a change. "admin" is also allowed as a target, but
+// only for a super_admin caller (see the extra check below) — a regular
+// admin can never view as another admin, and self-triggered test_mode
+// switches (any non-admin) can never target an admin account either, since
+// that would be a privilege escalation rather than a same-or-lower preview.
+const IMPERSONATABLE_ROLES = new Set(["teacher", "staff", "student", "admin"]);
 
 // ─── POST /admin/impersonate/:userId ─────────────────────────────────────────
 // Mints a one-time login link for the target user via the Supabase admin API
@@ -54,7 +58,12 @@ router.post(
     }
 
     if (!IMPERSONATABLE_ROLES.has(target.role as string)) {
-      res.status(403).json({ error: "You can only view as a teacher, staff member, or student" });
+      res.status(403).json({ error: "You can only view as a teacher, staff member, student, or admin" });
+      return;
+    }
+
+    if (target.role === "admin" && req.userRole !== "super_admin") {
+      res.status(403).json({ error: "Only a super admin can view as an admin" });
       return;
     }
 
