@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Router as WouterRouter } from "wouter";
+import { ClerkProvider } from "@clerk/clerk-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -11,6 +12,9 @@ import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { TestModeSwitcher } from "@/components/TestModeSwitcher";
 
 export const queryClient = new QueryClient();
+
+// Provisioned automatically by Replit's Clerk integration.
+const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string;
 
 /**
  * If a request comes in on a school's connected custom domain (not the
@@ -57,20 +61,22 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            <AuthProvider>
-              <NotesProvider>
-                <ImpersonationBanner />
-                <Router />
-                <TestModeSwitcher />
-                <Toaster />
-              </NotesProvider>
-            </AuthProvider>
-          </WouterRouter>
-        </TooltipProvider>
-      </QueryClientProvider>
+      <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+              <AuthProvider>
+                <NotesProvider>
+                  <ImpersonationBanner />
+                  <Router />
+                  <TestModeSwitcher />
+                  <Toaster />
+                </NotesProvider>
+              </AuthProvider>
+            </WouterRouter>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </ClerkProvider>
     </ErrorBoundary>
   );
 }

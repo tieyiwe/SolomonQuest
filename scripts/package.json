@@ -10,8 +10,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
-    "@workspace/db": "workspace:*",
-    "drizzle-orm": "catalog:"
+    "@workspace/db": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

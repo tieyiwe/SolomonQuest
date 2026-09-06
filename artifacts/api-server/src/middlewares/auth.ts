@@ -1,6 +1,6 @@
 import { type Request, type Response, type NextFunction } from "express";
-import { supabaseAdmin } from "../lib/supabase";
-import { verifyAuthToken } from "../lib/auth-jwt";
+import { verifyClerkSessionToken } from "../lib/clerk";
+import { resolveProfileForClerkUser } from "../lib/profile-resolution";
 
 export interface AuthenticatedRequest extends Request {
   userId?: string;
@@ -22,31 +22,29 @@ export async function requireAuth(
     }
 
     const token = authHeader.substring(7);
-    const decoded = verifyAuthToken(token);
+    const clerkUserId = await verifyClerkSessionToken(token);
 
-    if (!decoded) {
+    if (!clerkUserId) {
       res.status(401).json({ error: "Invalid token" });
       return;
     }
 
-    // Fetch profile to get role + school
-    const { data: profile } = await supabaseAdmin
-      .from("profiles")
-      .select("role, school_id")
-      .eq("id", decoded.sub)
-      .single();
+    const profile = await resolveProfileForClerkUser(clerkUserId);
+    if (!profile) {
+      res.status(500).json({ error: "Failed to resolve account" });
+      return;
+    }
 
-    // Set typed user object
     req.user = {
-      id: decoded.sub,
-      role: profile?.role ?? "",
-      school_id: profile?.school_id ?? null,
+      id: profile.id,
+      role: profile.role ?? "",
+      school_id: profile.school_id ?? null,
     };
 
     // Keep legacy fields for backward compat
-    req.userId = decoded.sub;
-    req.userRole = profile?.role;
-    req.schoolId = profile?.school_id;
+    req.userId = profile.id;
+    req.userRole = profile.role ?? undefined;
+    req.schoolId = profile.school_id ?? undefined;
 
     next();
   } catch (_err) {
@@ -63,19 +61,15 @@ export async function optionalAuth(
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7);
-      const decoded = verifyAuthToken(token);
-      if (decoded) {
-        req.userId = decoded.sub;
-        const { data: profile } = await supabaseAdmin
-          .from("profiles")
-          .select("role, school_id")
-          .eq("id", decoded.sub)
-          .single();
+      const clerkUserId = await verifyClerkSessionToken(token);
+      if (clerkUserId) {
+        const profile = await resolveProfileForClerkUser(clerkUserId);
         if (profile) {
-          req.userRole = profile.role;
-          req.schoolId = profile.school_id;
+          req.userId = profile.id;
+          req.userRole = profile.role ?? undefined;
+          req.schoolId = profile.school_id ?? undefined;
           req.user = {
-            id: decoded.sub,
+            id: profile.id,
             role: profile.role ?? "",
             school_id: profile.school_id ?? null,
           };

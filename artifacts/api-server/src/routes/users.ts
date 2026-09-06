@@ -1,9 +1,8 @@
 import { Router, type IRouter } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
-import { sendPasswordResetEmail } from "../lib/email";
 import { notifyUsers } from "../lib/notifications";
-import { appAuthAdmin, getAppUserEmail, generatePasswordResetLink, setAppUserPassword } from "../lib/app-users";
+import { appAuthAdmin, getAppUserEmail, setAppUserPassword } from "../lib/app-users";
 
 const router: IRouter = Router();
 
@@ -733,19 +732,13 @@ router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedR
     return;
   }
 
-  const resetLink = await generatePasswordResetLink(id);
-
-  if (!resetLink) {
-    res.status(500).json({ error: "Failed to generate reset link" });
-    return;
-  }
-
-  await sendPasswordResetEmail({
-    to: userEmail,
-    resetUrl: resetLink,
+  // Password resets are self-service through Clerk's sign-in page now —
+  // there's no admin-triggered "send reset email" API to call on their
+  // behalf. Tell the admin to have the user use "Forgot password" there.
+  res.json({
+    success: true,
+    message: `Password resets are self-service now — ask ${userEmail} to use "Forgot password" on the sign-in page.`,
   });
-
-  res.json({ success: true, message: "Password reset email sent" });
 });
 
 // POST /users/admin/reset-password - admin resets a user's password; same-school constraint

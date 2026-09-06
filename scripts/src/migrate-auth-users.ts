@@ -1,15 +1,14 @@
-// One-time migration: copies every existing Supabase Auth user into our own
-// `app_users` table (Replit's own Postgres, via DATABASE_URL) so nobody's
-// account disappears when the backend stops depending on Supabase Auth.
+// One-time migration: copies every existing Supabase Auth user's id + email
+// into our own `app_users` table (Replit's own Postgres, via DATABASE_URL).
 //
-// Existing accounts get NO password here — Supabase never exposes password
-// hashes to us, so there's nothing to copy. Each migrated user must use
-// "Forgot password" once on their first login after the cutover; the login
-// endpoint already gives a clear message for this case instead of a generic
-// "invalid password" error.
+// This is NOT an auth system — auth runs on Clerk now. This table is purely
+// a lookup so that when a returning tester signs up fresh through Clerk
+// with their same email, the backend can relink their new Clerk account to
+// their EXISTING profile (courses, grades, history) instead of creating a
+// second, empty one. See api-server/src/lib/profile-resolution.ts.
 //
-// Usage (from repo root, with both SUPABASE_* and DATABASE_URL set in the
-// environment this runs in):
+// Usage (from repo root, with SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY and the
+// new DATABASE_URL set in the environment this runs in):
 //   pnpm --filter @workspace/scripts run migrate-auth-users
 //
 // Safe to re-run — existing app_users rows are left untouched (ON CONFLICT
@@ -17,8 +16,7 @@
 // just backfills anyone new.
 
 import { createClient } from "@supabase/supabase-js";
-import { sql } from "drizzle-orm";
-import { db, appUsers } from "@workspace/db";
+import { db, appUsers, sql } from "@workspace/db";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -54,7 +52,6 @@ async function main() {
         .values({
           id: user.id,
           email: user.email.toLowerCase().trim(),
-          passwordHash: null,
           createdAt: new Date(user.created_at),
         })
         .onConflictDoNothing({ target: appUsers.id });
@@ -71,10 +68,7 @@ async function main() {
   );
 
   console.log(`\nDone. Processed ${totalMigrated} Supabase auth users.`);
-  console.log(`app_users now has ${count} total row(s).`);
-  console.log(
-    "\nEvery migrated user has no password set yet — they'll need to use \"Forgot password\" once to finish moving over."
-  );
+  console.log(`app_users now has ${count} total row(s), ready for email-based relinking on Clerk sign-up.`);
   process.exit(0);
 }
 
