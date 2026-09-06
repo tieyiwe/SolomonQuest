@@ -9,7 +9,7 @@ import {
   useListPrograms,
   getListUsersQueryKey,
 } from "@workspace/api-client-react";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -95,7 +95,7 @@ function PasswordResetButton({ userId, userName }: { userId: string; userName: s
   const handleReset = async () => {
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await auth.getSession();
       const res = await fetch(`/api/users/${userId}/reset-password`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session?.access_token}` },
@@ -153,7 +153,7 @@ function TestModeToggle({
     setLoading(true);
     onChanged(next);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await auth.getSession();
       const res = await fetch(`/api/users/${userId}/test-mode`, {
         method: "PATCH",
         headers: {
@@ -239,7 +239,7 @@ function AddToProgramButton({ studentId, studentName }: { studentId: string; stu
     if (!programId) return;
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await auth.getSession();
       const res = await fetch(`/api/programs/${programId}/enroll-student`, {
         method: "POST",
         headers: {
@@ -506,7 +506,7 @@ function InviteButton({
     }
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await auth.getSession();
       const res = await fetch("/api/invitations", {
         method: "POST",
         headers: {
@@ -632,7 +632,7 @@ function InvitationsTab({
     let cancelled = false;
     setLoading(true);
     setFetchError("");
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    auth.getSession().then(({ data: { session } }) => {
       fetch("/api/invitations", {
         headers: { Authorization: `Bearer ${session?.access_token}` },
       })

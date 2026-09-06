@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { sendResourceNotification } from "../lib/email";
+import { getAppUserEmails } from "../lib/app-users";
 
 const router: IRouter = Router({ mergeParams: true });
 
@@ -254,24 +255,7 @@ async function notifyStudentsOfResource(
   }
 
   try {
-    const { data: usersPage, error: usersError } =
-      await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
-
-    if (usersError) {
-      console.error("[course-resources] Failed to list users:", usersError.message);
-      return;
-    }
-
-    const userMap = new Map<string, { email: string; name?: string }>();
-    for (const u of usersPage.users) {
-      userMap.set(u.id, {
-        email: u.email ?? "",
-        name:
-          ((u.user_metadata?.first_name as string | undefined) ?? "") +
-          " " +
-          ((u.user_metadata?.last_name as string | undefined) ?? ""),
-      });
-    }
+    const emailMap = await getAppUserEmails(studentIds);
 
     const { data: profiles } = await supabaseAdmin
       .from("profiles")
@@ -286,13 +270,13 @@ async function notifyStudentsOfResource(
 
     await Promise.allSettled(
       studentIds.map(async (studentId) => {
-        const userInfo = userMap.get(studentId);
-        if (!userInfo?.email) return;
+        const email = emailMap[studentId];
+        if (!email) return;
 
         const studentName = profileMap.get(studentId) ?? "Student";
 
         await sendResourceNotification({
-          to: userInfo.email,
+          to: email,
           studentName,
           courseTitle,
           resourceTitle,

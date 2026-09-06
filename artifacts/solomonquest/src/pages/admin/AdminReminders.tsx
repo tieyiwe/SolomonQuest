@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,7 +67,7 @@ interface CourseOption {
 async function getAuthHeaders() {
   const {
     data: { session },
-  } = await supabase.auth.getSession();
+  } = await auth.getSession();
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${session?.access_token ?? ""}`,

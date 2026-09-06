@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { auth } from "./session";
 
 interface LogPayload {
   action: string;
@@ -10,7 +10,7 @@ interface LogPayload {
 
 export async function logActivity(payload: LogPayload): Promise<void> {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session } } = await auth.getSession();
     if (!session) return;
     await fetch("/api/activity-log", {
       method: "POST",

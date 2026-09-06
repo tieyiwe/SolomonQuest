@@ -6,7 +6,7 @@ import {
   getGetMySchoolQueryKey,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,7 +48,7 @@ import { useQueryClient } from "@tanstack/react-query";
 // ─── apiFetch helper ──────────────────────────────────────────────────────────
 
 async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await auth.getSession();
   const token = session?.access_token;
   return fetch(url, {
     ...options,
@@ -455,7 +455,7 @@ function AgentTab() {
 
   useEffect(() => {
     let cancelled = false;
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    auth.getSession().then(({ data: { session } }) => {
       fetch("/api/agent/settings", {
         headers: { Authorization: `Bearer ${session?.access_token}` },
       })
@@ -475,7 +475,7 @@ function AgentTab() {
     }
     setSaving(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await auth.getSession();
       const res = await fetch("/api/agent/settings", {
         method: "PATCH",
         headers: {

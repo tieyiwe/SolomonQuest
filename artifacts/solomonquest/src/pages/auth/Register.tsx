@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -42,7 +42,7 @@ export default function Register() {
   async function onSubmit(data: RegisterFormValues) {
     setIsLoading(true);
     try {
-      const { data: signUpData, error } = await supabase.auth.signUp({
+      const { data: signUpData, error } = await auth.signUp({
         email: data.email,
         password: data.password,
         options: {

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { TeacherLayout } from "@/components/layout/TeacherLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +39,7 @@ import {
 import { toast } from "sonner";
 
 async function apiFetch(url: string, options: RequestInit = {}) {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await auth.getSession();
   const token = data.session?.access_token ?? "";
   return fetch(url, {
     ...options,

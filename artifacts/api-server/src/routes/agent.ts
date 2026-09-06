@@ -3,6 +3,7 @@ import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { getAnthropicClient, AGENT_MODEL } from "../lib/anthropic";
 import { sendBroadcastEmail } from "../lib/email";
+import { appAuthAdmin } from "../lib/app-users";
 import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
@@ -520,7 +521,7 @@ router.post(
         if (method === "email") {
           const results = await Promise.allSettled(
             recipients.map(async (r: any) => {
-              const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(r.id);
+              const { data: authUser } = await appAuthAdmin.getUserById(r.id);
               const email = authUser?.user?.email;
               if (!email) return;
               await sendBroadcastEmail({

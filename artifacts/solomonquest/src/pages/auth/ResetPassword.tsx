@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -24,55 +24,9 @@ type ResetPasswordFormValues = z.infer<typeof resetPasswordSchema>;
 
 export default function ResetPassword() {
   const [isLoading, setIsLoading] = useState(false);
-  const [isValidSession, setIsValidSession] = useState<boolean | null>(null);
-  const [_, setLocation] = useLocation();
-
-  useEffect(() => {
-    async function checkSession() {
-      const { data } = await supabase.auth.getSession();
-      const session = data.session;
-      // Supabase sets the session type to "recovery" when the user arrives via a reset link
-      if (session && (session as unknown as { user?: { aud?: string } & { recovery?: boolean } } & { type?: string }).type === "recovery") {
-        setIsValidSession(true);
-      } else if (session) {
-        // There is a session but not a recovery one — still allow if it's a fresh recovery token
-        // Supabase v2 stores the type on the session object
-        const raw = session as unknown as Record<string, unknown>;
-        if (raw["type"] === "recovery") {
-          setIsValidSession(true);
-        } else {
-          // Check URL hash for access_token which indicates a fresh recovery redirect
-          const hash = window.location.hash;
-          if (hash && hash.includes("type=recovery")) {
-            setIsValidSession(true);
-          } else {
-            setIsValidSession(false);
-          }
-        }
-      } else {
-        // No session — check if URL hash carries a recovery token (before Supabase processes it)
-        const hash = window.location.hash;
-        if (hash && hash.includes("type=recovery")) {
-          setIsValidSession(true);
-        } else {
-          setIsValidSession(false);
-        }
-      }
-    }
-
-    checkSession();
-
-    // Listen for the PASSWORD_RECOVERY event which Supabase fires when it processes the hash
-    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setIsValidSession(true);
-      }
-    });
-
-    return () => {
-      listener.subscription.unsubscribe();
-    };
-  }, []);
+  const [location, setLocation] = useLocation();
+  const params = new URLSearchParams(location.split("?")[1] ?? "");
+  const token = params.get("token");
 
   const form = useForm<ResetPasswordFormValues>({
     resolver: zodResolver(resetPasswordSchema),
@@ -80,12 +34,20 @@ export default function ResetPassword() {
   });
 
   async function onSubmit(data: ResetPasswordFormValues) {
+    if (!token) return;
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password: data.password });
-      if (error) throw error;
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password: data.password }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to update password");
+
+      await auth.setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
       toast.success("Password updated!");
-      setTimeout(() => setLocation("/auth/login"), 2000);
+      setTimeout(() => setLocation("/auth/login"), 1500);
     } catch (error: unknown) {
       const msg =
         error instanceof Error && error.message
@@ -112,19 +74,12 @@ export default function ResetPassword() {
             </p>
           </div>
 
-          {/* Loading state while we determine session validity */}
-          {isValidSession === null && (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          )}
-
-          {/* Invalid / expired link */}
-          {isValidSession === false && (
+          {/* Invalid / missing link */}
+          {!token && (
             <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-5 space-y-3">
               <p className="font-semibold text-destructive">Link expired or invalid</p>
               <p className="text-sm text-muted-foreground">
-                This password reset link has expired or is invalid. Please request a new one.
+                This password reset link is missing or invalid. Please request a new one.
               </p>
               <Link href="/auth/login">
                 <a className="text-sm font-semibold text-primary hover:underline">
@@ -134,8 +89,7 @@ export default function ResetPassword() {
             </div>
           )}
 
-          {/* Valid recovery session — show the form */}
-          {isValidSession === true && (
+          {token && (
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                 <FormField

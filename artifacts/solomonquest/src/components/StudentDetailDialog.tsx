@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import {
   Dialog,
   DialogContent,
@@ -55,7 +55,7 @@ export function StudentDetailDialog({
     setLoading(true);
     setError("");
     setDetail(null);
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    auth.getSession().then(({ data: { session } }) => {
       fetch(`/api/users/${studentId}/detail`, {
         headers: { Authorization: `Bearer ${session?.access_token}` },
       })

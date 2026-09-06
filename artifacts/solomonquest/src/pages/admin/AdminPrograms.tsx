@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { StudentDetailDialog } from "@/components/StudentDetailDialog";
 import {
   useListPrograms,
@@ -129,7 +129,7 @@ function ProgramRosterTab({ programId }: { programId: string }) {
 async function apiFetch(path: string, options: RequestInit = {}) {
   const {
     data: { session },
-  } = await supabase.auth.getSession();
+  } = await auth.getSession();
   return fetch(path, {
     ...options,
     headers: {

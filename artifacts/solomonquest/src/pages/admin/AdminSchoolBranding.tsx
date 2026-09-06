@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -193,7 +194,7 @@ const DEFAULT_BRANDING: Branding = {
 // ─── API helper ───────────────────────────────────────────────────────────────
 
 async function apiFetch(path: string, options: RequestInit = {}) {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await auth.getSession();
   const token = session?.access_token;
   return fetch(path, {
     ...options,

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { toast } from "sonner";
 import {
   LayoutDashboard,
@@ -38,7 +38,7 @@ import { format } from "date-fns";
 // ─── apiFetch ─────────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await auth.getSession();
   const token = session?.access_token;
   const res = await fetch(path, {
     ...options,

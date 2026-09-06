@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { TeacherLayout } from "@/components/layout/TeacherLayout";
 import { StudentLayout } from "@/components/layout/StudentLayout";
@@ -25,7 +26,7 @@ function roleLabel(role?: string | null) {
 }
 
 async function authedFetch(path: string, init?: RequestInit) {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await auth.getSession();
   return fetch(path, {
     ...init,
     headers: {

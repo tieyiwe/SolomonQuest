@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { toast } from "sonner";
 import {
   LayoutDashboard,
@@ -51,7 +51,7 @@ import { Button } from "@/components/ui/button";
 // ─── apiFetch ─────────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await auth.getSession();
   const token = session?.access_token;
   const res = await fetch(path, {
     ...options,
@@ -874,7 +874,7 @@ function ActivityLog() {
   useEffect(() => {
     let cancelled = false;
     import("@/lib/supabase").then(({ supabase }) =>
-      supabase.auth.getSession().then(({ data: { session } }) => {
+      auth.getSession().then(({ data: { session } }) => {
         if (cancelled) return;
         if (!session) { setLoading(false); return; }
         fetch("/api/activity-log?limit=50", {

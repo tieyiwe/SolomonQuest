@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -69,7 +69,7 @@ export default function Login() {
   async function onSubmit(data: LoginFormValues) {
     setIsLoading(true);
     try {
-      const { data: authData, error } = await supabase.auth.signInWithPassword({
+      const { data: authData, error } = await auth.signInWithPassword({
         email: data.email,
         password: data.password,
       });
@@ -114,9 +114,7 @@ export default function Login() {
   async function onResetSubmit(data: ResetFormValues) {
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(data.email, {
-        redirectTo: `${window.location.origin}/auth/reset-password`,
-      });
+      const { error } = await auth.resetPasswordForEmail(data.email);
       if (error) throw error;
       setResetSent(true);
     } catch (error: unknown) {

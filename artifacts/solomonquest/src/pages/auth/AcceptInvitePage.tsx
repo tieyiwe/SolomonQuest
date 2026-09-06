@@ -3,7 +3,7 @@ import { useLocation, useParams } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { supabase } from "@/lib/supabase";
+import { auth } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -58,31 +58,22 @@ export default function AcceptInvitePage() {
     if (!invite) return;
     setSubmitting(true);
     try {
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: invite.email,
-        password: data.password,
-        options: {
-          data: {
-            first_name: data.firstName,
-            last_name: data.lastName,
-            phone: data.phone,
-          },
-        },
-      });
-
-      if (signUpError) throw signUpError;
-      if (!signUpData.session) throw new Error("Please check your email to confirm your account, then log in.");
-
-      // Accept the invitation (sets role + school_id on profile)
+      // The account is created server-side by this same call, using the
+      // invitation's email — there's no separate sign-up step.
       const res = await fetch(`/api/invitations/accept/${token}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${signUpData.session.access_token}`,
-        },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: data.password,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          phone: data.phone,
+        }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Failed to accept invitation");
+
+      await auth.setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
 
       setSuccess(true);
       toast.success("Account created! Welcome to " + invite.schoolName);

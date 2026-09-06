@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { auth } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +45,7 @@ import { cn } from "@/lib/utils";
 // ─── API helper ──────────────────────────────────────────────────────────────
 
 async function apiFetch(url: string, options: RequestInit = {}) {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await auth.getSession();
   const token = data.session?.access_token ?? "";
   return fetch(url, {
     ...options,

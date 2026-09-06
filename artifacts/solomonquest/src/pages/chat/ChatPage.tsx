@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { auth } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { NotificationBell } from "@/components/NotificationBell";
 import { Link, useLocation } from "wouter";
@@ -155,7 +156,7 @@ interface UserResult {
 // ---------------------------------------------------------------------------
 
 async function getToken(): Promise<string> {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await auth.getSession();
   return data.session?.access_token ?? "";
 }
 

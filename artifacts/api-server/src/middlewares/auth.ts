@@ -1,5 +1,6 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { supabaseAdmin } from "../lib/supabase";
+import { verifyAuthToken } from "../lib/auth-jwt";
 
 export interface AuthenticatedRequest extends Request {
   userId?: string;
@@ -21,9 +22,9 @@ export async function requireAuth(
     }
 
     const token = authHeader.substring(7);
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    const decoded = verifyAuthToken(token);
 
-    if (error || !data.user) {
+    if (!decoded) {
       res.status(401).json({ error: "Invalid token" });
       return;
     }
@@ -32,18 +33,18 @@ export async function requireAuth(
     const { data: profile } = await supabaseAdmin
       .from("profiles")
       .select("role, school_id")
-      .eq("id", data.user.id)
+      .eq("id", decoded.sub)
       .single();
 
     // Set typed user object
     req.user = {
-      id: data.user.id,
+      id: decoded.sub,
       role: profile?.role ?? "",
       school_id: profile?.school_id ?? null,
     };
 
     // Keep legacy fields for backward compat
-    req.userId = data.user.id;
+    req.userId = decoded.sub;
     req.userRole = profile?.role;
     req.schoolId = profile?.school_id;
 
@@ -62,19 +63,19 @@ export async function optionalAuth(
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7);
-      const { data } = await supabaseAdmin.auth.getUser(token);
-      if (data.user) {
-        req.userId = data.user.id;
+      const decoded = verifyAuthToken(token);
+      if (decoded) {
+        req.userId = decoded.sub;
         const { data: profile } = await supabaseAdmin
           .from("profiles")
           .select("role, school_id")
-          .eq("id", data.user.id)
+          .eq("id", decoded.sub)
           .single();
         if (profile) {
           req.userRole = profile.role;
           req.schoolId = profile.school_id;
           req.user = {
-            id: data.user.id,
+            id: decoded.sub,
             role: profile.role ?? "",
             school_id: profile.school_id ?? null,
           };

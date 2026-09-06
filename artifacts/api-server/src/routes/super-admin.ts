@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { notifyUsers } from "../lib/notifications";
+import { appAuthAdmin } from "../lib/app-users";
 
 const router: IRouter = Router();
 
@@ -213,7 +214,7 @@ router.get(
           // Fetch owner email from auth
           let ownerEmail: string | null = null;
           if (school.owner_id) {
-            const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(school.owner_id);
+            const { data: authUser } = await appAuthAdmin.getUserById(school.owner_id);
             ownerEmail = authUser?.user?.email ?? null;
           }
 
@@ -606,7 +607,7 @@ router.get(
             schoolName = sc?.name ?? null;
           }
 
-          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(p.id);
+          const { data: authUser } = await appAuthAdmin.getUserById(p.id);
 
           return {
             id: p.id,
@@ -616,7 +617,7 @@ router.get(
             role: p.role,
             school_name: schoolName,
             created_at: p.created_at,
-            last_sign_in: authUser?.user?.last_sign_in_at ?? null,
+            last_sign_in: null,
           };
         })
       );
@@ -756,7 +757,7 @@ router.delete(
         .single();
 
       // Delete from auth (cascades to profiles via DB trigger if set, or delete manually)
-      const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(id);
+      const { error: authErr } = await appAuthAdmin.deleteUser(id);
       if (authErr) {
         res.status(500).json({ error: authErr.message });
         return;
