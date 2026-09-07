@@ -1,9 +1,6 @@
-import { eq } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { db, appUsers } from "@workspace/db";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
-import { signAuthToken } from "../lib/auth-jwt";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -17,19 +14,17 @@ const router: IRouter = Router();
 const IMPERSONATABLE_ROLES = new Set(["teacher", "staff", "student", "admin"]);
 
 // ─── POST /admin/impersonate/:userId ─────────────────────────────────────────
-// Directly issues our own auth token for the target user — since this is a
-// server-initiated action by an already-authenticated caller (not a login
-// flow), there's no need for an email round-trip; the token is handed
-// straight back and the client swaps to it, so every existing fetch/query in
-// the app "just works" once the client swaps to it, with no per-page changes
-// needed.
+// Mints a one-time login link for the target user via the Supabase admin API
+// and hands back just the pieces the client needs to redeem it with
+// supabase.auth.verifyOtp — this establishes a *real* session as that user,
+// so every existing fetch/query in the app "just works" once the client
+// swaps to it, with no per-page changes needed.
 //
 // Two kinds of caller are allowed: an admin/super_admin using "View As", or
 // any user an admin has explicitly flagged with test_mode_enabled — lets a
 // team member self-switch between accounts for pre-launch testing without
 // needing an admin to trigger it every time. Both are still restricted to
-// teacher/staff/student/admin targets in their own school (see role checks
-// below for the admin-target exception).
+// teacher/staff/student targets in their own school (never another admin).
 
 router.post(
   "/admin/impersonate/:userId",
@@ -77,20 +72,34 @@ router.post(
       return;
     }
 
-    const [account] = await db.select().from(appUsers).where(eq(appUsers.id, userId));
-    if (!account) {
-      res.status(404).json({ error: "This user has no login account on file" });
+    const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (authError || !authUser?.user?.email) {
+      res.status(404).json({ error: "This user has no login email on file" });
       return;
     }
 
-    const accessToken = signAuthToken(userId);
+    const { data: link, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: "magiclink",
+      email: authUser.user.email,
+    });
+
+    if (linkError || !link) {
+      res.status(500).json({ error: linkError?.message ?? "Failed to start view-as session" });
+      return;
+    }
+
+    const hashedToken = (link.properties as { hashed_token?: string } | undefined)?.hashed_token;
+    if (!hashedToken) {
+      res.status(500).json({ error: "Failed to start view-as session" });
+      return;
+    }
 
     await supabaseAdmin.from("platform_audit_log").insert({
       action: isAdmin ? "admin_impersonate_start" : "test_mode_switch_start",
       performed_by: req.userId,
       target_type: "user",
       target_id: userId,
-      target_name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || account.email,
+      target_name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || authUser.user.email,
       metadata: { targetRole: target.role },
     });
 
@@ -100,10 +109,11 @@ router.post(
     );
 
     res.json({
-      accessToken,
+      emailOtp: hashedToken,
+      email: authUser.user.email,
       targetUser: {
         id: target.id,
-        name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || account.email,
+        name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || authUser.user.email,
         role: target.role,
       },
     });

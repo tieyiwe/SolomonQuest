@@ -3,7 +3,6 @@ import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { sendPasswordResetEmail } from "../lib/email";
 import { notifyUsers } from "../lib/notifications";
-import { appAuthAdmin, getAppUserEmail, generatePasswordResetLink, setAppUserPassword } from "../lib/app-users";
 
 const router: IRouter = Router();
 
@@ -39,7 +38,7 @@ router.get("/users", requireAuth, async (req: AuthenticatedRequest, res): Promis
   // Fetch emails from auth
   const profiles = await Promise.all(
     (data ?? []).map(async (p) => {
-      const { data: userData } = await appAuthAdmin.getUserById(p.id);
+      const { data: userData } = await supabaseAdmin.auth.admin.getUserById(p.id);
       return mapProfile(p, userData?.user?.email);
     })
   );
@@ -267,7 +266,7 @@ router.post("/users/me/avatar", requireAuth, async (req: AuthenticatedRequest, r
     return;
   }
 
-  const { data: userData } = await appAuthAdmin.getUserById(req.userId);
+  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(req.userId);
   res.json(mapProfile(data, userData?.user?.email));
 });
 
@@ -294,7 +293,7 @@ router.get("/users/:id", requireAuth, async (req: AuthenticatedRequest, res): Pr
     }
   }
 
-  const { data: userData } = await appAuthAdmin.getUserById(id);
+  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
   res.json(mapProfile(data, userData?.user?.email));
 });
 
@@ -382,7 +381,7 @@ router.get("/users/:id/detail", requireAuth, async (req: AuthenticatedRequest, r
   };
 
   if (allowedFields.contact) {
-    const { data: authUser } = await appAuthAdmin.getUserById(id);
+    const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(id);
     result.email = authUser?.user?.email ?? null;
     result.phone = student.phone ?? null;
   }
@@ -469,7 +468,7 @@ router.get("/users/:id/teacher-detail", requireAuth, async (req: AuthenticatedRe
     totalStudents = new Set((enrollments ?? []).map((e) => e.student_id as string)).size;
   }
 
-  const { data: authUser } = await appAuthAdmin.getUserById(id);
+  const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(id);
 
   res.json({
     id: teacher.id,
@@ -539,7 +538,7 @@ router.patch("/users/:id", requireAuth, async (req: AuthenticatedRequest, res): 
     return;
   }
 
-  const { data: userData } = await appAuthAdmin.getUserById(id);
+  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
   res.json(mapProfile(data, userData?.user?.email));
 });
 
@@ -617,7 +616,7 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthenticatedRequest, r
     return;
   }
 
-  const { data: userData } = await appAuthAdmin.getUserById(id);
+  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
   res.json(mapProfile(data, userData?.user?.email));
 });
 
@@ -726,14 +725,25 @@ router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedR
     return;
   }
 
-  const userEmail = await getAppUserEmail(id);
+  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
+  const userEmail = userData?.user?.email;
 
   if (!userEmail) {
     res.status(400).json({ error: "User has no email address" });
     return;
   }
 
-  const resetLink = await generatePasswordResetLink(id);
+  const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+    type: "recovery",
+    email: userEmail,
+  });
+
+  if (linkError || !linkData) {
+    res.status(500).json({ error: "Failed to generate reset link" });
+    return;
+  }
+
+  const resetLink = linkData.properties?.action_link;
 
   if (!resetLink) {
     res.status(500).json({ error: "Failed to generate reset link" });
@@ -776,9 +786,11 @@ router.post("/users/admin/reset-password", requireAuth, async (req: Authenticate
     }
   }
 
-  const ok = await setAppUserPassword(user_id, new_password);
+  const { data, error } = await supabaseAdmin.auth.admin.updateUserById(user_id, {
+    password: new_password,
+  });
 
-  if (!ok) {
+  if (error || !data) {
     res.status(500).json({ error: "Failed to reset password" });
     return;
   }

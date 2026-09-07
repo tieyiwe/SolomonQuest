@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { Copy, BookOpen, ClipboardList } from "lucide-react";
 import { Link } from "wouter";
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const { data: { session } } = await auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   const res = await fetch(path, {
     ...options,

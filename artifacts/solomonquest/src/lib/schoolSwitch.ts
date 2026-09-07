@@ -1,4 +1,4 @@
-import { auth } from "./session";
+import { supabase } from "./supabase";
 
 const STORAGE_KEY = "sq_linked_schools";
 
@@ -73,7 +73,7 @@ async function fetchMe(accessToken: string): Promise<{ id: string; role: string;
 
 /** Saves the CURRENTLY active session as a linked school, so switching back to it is instant too. */
 export async function linkCurrentSession(): Promise<void> {
-  const { data: { session } } = await auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   if (!session) return;
   const [me, school] = await Promise.all([fetchMe(session.access_token), fetchCurrentSchool(session.access_token)]);
   if (!me || !school) return;
@@ -93,7 +93,7 @@ export async function switchToLinkedSchool(schoolId: string): Promise<void> {
   const entry = readLinked().find((s) => s.schoolId === schoolId);
   if (!entry) throw new Error("This school isn't linked yet");
 
-  const { data, error } = await auth.setSession({
+  const { data, error } = await supabase.auth.setSession({
     access_token: entry.access_token,
     refresh_token: entry.refresh_token,
   });
@@ -125,7 +125,7 @@ export async function loginToSchool(
 ): Promise<{ schoolName: string; role: string }> {
   await linkCurrentSession().catch(() => {});
 
-  const { data, error } = await auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error || !data.session) {
     throw new Error(error?.message ?? "Invalid email or password");
   }

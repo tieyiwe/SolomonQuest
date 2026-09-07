@@ -150,8 +150,8 @@ function GradingPanel({
     if (!selection?.fileUrl) return;
     setConverting(true);
     try {
-      const { auth } = await import("@/lib/session");
-      const { data: { session } } = await auth.getSession();
+      const { supabase } = await import("@/lib/supabase");
+      const { data: { session } } = await supabase.auth.getSession();
       const pdfResp = await fetch(selection.fileUrl);
       if (!pdfResp.ok) throw new Error("Could not fetch PDF file");
       const pdfBlob = await pdfResp.blob();

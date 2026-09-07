@@ -1,10 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import type { Note } from "./types";
 
 async function authedFetch(path: string, init?: RequestInit) {
-  const { data: { session } } = await auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   return fetch(path, {
     ...init,
     headers: {

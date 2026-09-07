@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { FlaskConical, Loader2, Search } from "lucide-react";
 import {
@@ -55,7 +55,7 @@ export function TestModeSwitcher() {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
-    auth.getSession().then(async ({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       try {
         const res = await fetch(`/api/users/search?query=${encodeURIComponent(query)}`, {
           headers: { Authorization: `Bearer ${session?.access_token}` },

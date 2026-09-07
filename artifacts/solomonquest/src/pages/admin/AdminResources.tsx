@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -100,7 +100,7 @@ function fileBg(file_type: string) {
 }
 
 async function getToken(): Promise<string | null> {
-  const { data: { session } } = await auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   return session?.access_token ?? null;
 }
 

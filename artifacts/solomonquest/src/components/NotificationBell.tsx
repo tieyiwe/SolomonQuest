@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { auth } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { Bell } from "lucide-react";
 import { Link, useLocation } from "wouter";
@@ -27,7 +26,7 @@ interface MessageItem {
 type TabType = "notifications" | "messages";
 
 async function apiFetch(path: string, options?: RequestInit) {
-  const { data: { session } } = await auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   return fetch(path, {
     ...options,
     headers: {

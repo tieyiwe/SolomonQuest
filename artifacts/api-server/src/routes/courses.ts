@@ -2,7 +2,6 @@ import { Router, type IRouter } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { enrollStudentInCourse } from "../lib/enrollment";
-import { appAuthAdmin } from "../lib/app-users";
 
 function canManageCourses(role: string | undefined): boolean {
   return role === "admin" || role === "super_admin" || role === "teacher";
@@ -346,7 +345,7 @@ router.get("/courses/:id/students", requireAuth, async (req: AuthenticatedReques
 
   const withEmails = await Promise.all(
     (profiles ?? []).map(async (p: Record<string, unknown>) => {
-      const { data: authUser } = await appAuthAdmin.getUserById(p.id as string);
+      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(p.id as string);
       return {
         id: p.id,
         schoolId: p.school_id,

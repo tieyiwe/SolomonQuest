@@ -11,7 +11,7 @@ import {
   useListPrograms,
   getListCoursesQueryKey,
 } from "@workspace/api-client-react";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -105,7 +105,7 @@ const defaultForm: CourseFormData = {
 async function apiFetch(path: string, options: RequestInit = {}) {
   const {
     data: { session },
-  } = await auth.getSession();
+  } = await supabase.auth.getSession();
   return fetch(path, {
     ...options,
     headers: {
@@ -291,7 +291,7 @@ async function updateLiveSettings(
 ) {
   const {
     data: { session },
-  } = await auth.getSession();
+  } = await supabase.auth.getSession();
   const res = await fetch(`/api/courses/${courseId}/live-settings`, {
     method: "PUT",
     headers: {
@@ -643,7 +643,7 @@ function InviteTeacherDialog() {
     try {
       const {
         data: { session },
-      } = await auth.getSession();
+      } = await supabase.auth.getSession();
       const res = await fetch("/api/invitations", {
         method: "POST",
         headers: {

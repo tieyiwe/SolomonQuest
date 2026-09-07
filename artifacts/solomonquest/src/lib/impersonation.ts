@@ -1,4 +1,4 @@
-import { auth } from "./session";
+import { supabase } from "./supabase";
 
 const ADMIN_SESSION_KEY = "sq_impersonation_admin_session";
 const TARGET_KEY = "sq_impersonation_target";
@@ -15,17 +15,16 @@ function dashboardPathFor(role: string): string {
 }
 
 /**
- * Starts a "view as" / Test Mode session: the server directly issues an auth
- * token for the target user (no email round-trip needed, since this is a
- * server-initiated action by an already-authenticated caller), so every
- * existing fetch/query in the app works unmodified once the client swaps to
- * it — no per-page auth plumbing needed. The caller's own session (and role,
- * so we know where to send them back) is saved first so `returnToOrigin` can
- * restore it later. Works both for an admin using "View As" and for any user
- * an admin has granted test_mode_enabled to.
+ * Starts a "view as" / Test Mode session: mints a real Supabase session for
+ * the target user (via a server-generated magic-link OTP, redeemed here) so
+ * every existing fetch/query in the app works unmodified once the client
+ * swaps to it — no per-page auth plumbing needed. The caller's own session
+ * (and role, so we know where to send them back) is saved first so
+ * `returnToOrigin` can restore it later. Works both for an admin using
+ * "View As" and for any user an admin has granted test_mode_enabled to.
  */
 export async function startImpersonation(userId: string): Promise<void> {
-  const { data: { session: originSession } } = await auth.getSession();
+  const { data: { session: originSession } } = await supabase.auth.getSession();
   if (!originSession) throw new Error("Not signed in");
 
   const [impersonateRes, meRes] = await Promise.all([
@@ -43,11 +42,14 @@ export async function startImpersonation(userId: string): Promise<void> {
     throw new Error(body.error ?? "Failed to start view-as session");
   }
 
-  const { accessToken, targetUser } = await impersonateRes.json();
+  const { emailOtp, targetUser } = await impersonateRes.json();
   const originRole: string = meRes.ok ? (await meRes.json())?.role ?? "student" : "student";
 
-  const { error: setError } = await auth.setSession({ access_token: accessToken, refresh_token: accessToken });
-  if (setError) throw setError;
+  const { error: verifyError } = await supabase.auth.verifyOtp({
+    type: "email",
+    token_hash: emailOtp,
+  });
+  if (verifyError) throw verifyError;
 
   sessionStorage.setItem(
     ADMIN_SESSION_KEY,
@@ -98,7 +100,7 @@ export async function returnToOrigin(): Promise<void> {
   }
 
   const { access_token, refresh_token, originRole } = JSON.parse(raw);
-  await auth.setSession({ access_token, refresh_token });
+  await supabase.auth.setSession({ access_token, refresh_token });
   window.location.href =
     originRole === "admin" || originRole === "super_admin" ? "/dashboard/admin" : dashboardPathFor(originRole);
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { useGetMySchool } from "@workspace/api-client-react";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,7 @@ import { toast } from "sonner";
 async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const {
     data: { session },
-  } = await auth.getSession();
+  } = await supabase.auth.getSession();
   const token = session?.access_token;
   return fetch(url, {
     ...options,

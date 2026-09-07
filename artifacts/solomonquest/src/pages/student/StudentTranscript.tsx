@@ -1,5 +1,5 @@
 import { useAuth } from "@/contexts/AuthContext";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { StudentLayout } from "@/components/layout/StudentLayout";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -92,7 +92,7 @@ function gpaColor(gpa: number) {
 }
 
 async function fetchTranscript(studentId: string): Promise<TranscriptData> {
-  const { data: { session } } = await auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   const res = await fetch(`/api/transcript/${studentId}`, {
     headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
   });

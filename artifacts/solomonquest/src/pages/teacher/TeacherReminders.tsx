@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { TeacherLayout } from "@/components/layout/TeacherLayout";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,7 +67,7 @@ interface StudentOption {
 async function getAuthHeaders() {
   const {
     data: { session },
-  } = await auth.getSession();
+  } = await supabase.auth.getSession();
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${session?.access_token ?? ""}`,

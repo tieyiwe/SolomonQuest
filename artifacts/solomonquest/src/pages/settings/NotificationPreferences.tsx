@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { auth } from "@/lib/session";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner";
 
 async function apiFetch(url: string, options: RequestInit = {}) {
-  const { data } = await auth.getSession();
+  const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token ?? "";
   return fetch(url, {
     ...options,

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { auth } from "@/lib/session";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +9,7 @@ import { Send, Inbox, ArrowLeft, Search, Edit, Reply } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 async function apiFetch(url: string, options: RequestInit = {}) {
-  const { data } = await auth.getSession();
+  const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token ?? "";
   return fetch(url, {
     ...options,

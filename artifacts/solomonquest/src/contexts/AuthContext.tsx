@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useRef } from "react";
-import { auth, type AppSession } from "@/lib/session";
+import { Session, User } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
 import { useGetMe, setAuthTokenGetter, getGetMeQueryKey } from "@workspace/api-client-react";
 import { logActivity } from "@/lib/activityLogger";
 import { clearImpersonationState } from "@/lib/impersonation";
@@ -9,7 +10,7 @@ import { queryClient } from "@/App";
 
 interface AuthContextType {
   user: Profile | null;
-  session: AppSession | null;
+  session: Session | null;
   isLoading: boolean;
   signOut: () => Promise<void>;
 }
@@ -22,14 +23,14 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<AppSession | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [_, setLocation] = useLocation();
   const loggedInRef = useRef(false);
   const sessionUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setIsLoadingSession(false);
       sessionUserIdRef.current = session?.user?.id ?? null;
@@ -37,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       // useGetMe's query key is static (not parameterized by session), so
       // switching to a DIFFERENT auth user in the same tab — logging in
@@ -68,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Keep the API client's auth token in sync with the Supabase session
   useEffect(() => {
     setAuthTokenGetter(async () => {
-      const { data: { session } } = await auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
       return session?.access_token ?? null;
     });
     return () => setAuthTokenGetter(null);
@@ -84,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     try { await logActivity({ action: "logout" }); } catch { /* non-blocking */ }
-    await auth.signOut();
+    await supabase.auth.signOut();
     clearImpersonationState();
     queryClient.clear();
     setLocation("/auth/login");
