@@ -14,28 +14,17 @@ function dashboardPathFor(role: string): string {
   return "/dashboard/student"; // staff and student share the student dashboard
 }
 
-function getClerk(): any {
-  return (window as any).Clerk;
-}
-
 /**
- * Starts a "view as" / Test Mode session: the server issues a Clerk actor
- * token for the target user, redeemed here via Clerk's ticket sign-in
- * strategy — this creates a genuine SECOND Clerk session for that account
- * without touching the caller's own session (Clerk tracks multiple signed-in
- * sessions per browser), so every existing fetch/query in the app works
- * unmodified once the client's active session switches, with no per-page
- * auth plumbing needed. The caller's own Clerk session id (and role, so we
- * know where to send them back) is saved first so `returnToOrigin` can
- * switch back to it later — Clerk keeps that session alive in the
- * background the whole time. Works both for an admin using "View As" and
- * for any user an admin has granted test_mode_enabled to.
+ * Starts a "view as" / Test Mode session: the server directly issues an auth
+ * token for the target user (no email round-trip needed, since this is a
+ * server-initiated action by an already-authenticated caller), so every
+ * existing fetch/query in the app works unmodified once the client swaps to
+ * it — no per-page auth plumbing needed. The caller's own session (and role,
+ * so we know where to send them back) is saved first so `returnToOrigin` can
+ * restore it later. Works both for an admin using "View As" and for any user
+ * an admin has granted test_mode_enabled to.
  */
 export async function startImpersonation(userId: string): Promise<void> {
-  const clerk = getClerk();
-  const originSessionId: string | undefined = clerk?.session?.id;
-  if (!originSessionId) throw new Error("Not signed in");
-
   const { data: { session: originSession } } = await auth.getSession();
   if (!originSession) throw new Error("Not signed in");
 
@@ -54,21 +43,22 @@ export async function startImpersonation(userId: string): Promise<void> {
     throw new Error(body.error ?? "Failed to start view-as session");
   }
 
-  const { ticket, targetUser } = await impersonateRes.json();
+  const { accessToken, targetUser } = await impersonateRes.json();
   const originRole: string = meRes.ok ? (await meRes.json())?.role ?? "student" : "student";
 
-  const signInAttempt = await clerk.client.signIn.create({ strategy: "ticket", ticket });
-  if (signInAttempt.status !== "complete" || !signInAttempt.createdSessionId) {
-    throw new Error("Failed to start view-as session");
-  }
+  const { error: setError } = await auth.setSession({ access_token: accessToken, refresh_token: accessToken });
+  if (setError) throw setError;
 
   sessionStorage.setItem(
     ADMIN_SESSION_KEY,
-    JSON.stringify({ sessionId: originSessionId, originRole })
+    JSON.stringify({
+      access_token: originSession.access_token,
+      refresh_token: originSession.refresh_token,
+      originRole,
+    })
   );
   sessionStorage.setItem(TARGET_KEY, JSON.stringify(targetUser as ImpersonationTarget));
 
-  await clerk.setActive({ session: signInAttempt.createdSessionId });
   window.location.href = dashboardPathFor(targetUser.role);
 }
 
@@ -96,7 +86,7 @@ export function getImpersonationTarget(): ImpersonationTarget | null {
   }
 }
 
-/** Switches back to the original account's already-active Clerk session. */
+/** Restores the original account's session and clears view-as state. */
 export async function returnToOrigin(): Promise<void> {
   const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
   sessionStorage.removeItem(ADMIN_SESSION_KEY);
@@ -107,15 +97,8 @@ export async function returnToOrigin(): Promise<void> {
     return;
   }
 
-  const { sessionId, originRole } = JSON.parse(raw);
-  const clerk = getClerk();
-  try {
-    await clerk?.setActive({ session: sessionId });
-  } catch {
-    // Origin session may have expired — fall back to a normal login.
-    window.location.href = "/auth/login";
-    return;
-  }
+  const { access_token, refresh_token, originRole } = JSON.parse(raw);
+  await auth.setSession({ access_token, refresh_token });
   window.location.href =
     originRole === "admin" || originRole === "super_admin" ? "/dashboard/admin" : dashboardPathFor(originRole);
 }

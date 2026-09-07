@@ -1,7 +1,10 @@
+import { randomUUID } from "crypto";
+import { eq } from "drizzle-orm";
 import { Router, type IRouter, type Response } from "express";
+import { db, appUsers } from "@workspace/db";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
-import { getAppUserEmail } from "../lib/app-users";
+import { hashPassword, signAuthToken } from "../lib/auth-jwt";
 import { sendEnhancedInvite, sendWelcomeEmail } from "../lib/email";
 import { enrollUserInSchoolChannels } from "./chat";
 import { enrollStudentInCourse } from "../lib/enrollment";
@@ -245,20 +248,28 @@ router.get(
   }
 );
 
-// ─── POST /invitations/accept/:token — accept invitation ─────────────────────
-// The invitee signs up through Clerk on the frontend first (pre-filled with
-// the invite's email), which is what actually creates their account; by the
-// time this endpoint runs, `requireAuth` has already resolved (and
-// auto-created, if new) their profile row. This endpoint's only job is to
-// apply the invitation's role + school to that profile.
+// ─── POST /invitations/accept/:token — accept invitation & create account ────
+// Public (no requireAuth): this endpoint now creates the account itself,
+// using the email from the invitation record — so there's no separate
+// sign-up step whose email could drift from the invite's, and no need to
+// cross-check a caller's identity against the invite.
 
 router.post(
   "/invitations/accept/:token",
-  requireAuth,
-  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  async (req, res: Response): Promise<void> => {
     try {
       const { token } = req.params;
-      const { userId } = req;
+      const { password, firstName, lastName, phone } = req.body as {
+        password?: string;
+        firstName?: string;
+        lastName?: string;
+        phone?: string;
+      };
+
+      if (!password || password.length < 6) {
+        res.status(400).json({ error: "Password must be at least 6 characters" });
+        return;
+      }
 
       const { data: invitation, error } = await supabaseAdmin
         .from("invitations")
@@ -281,33 +292,31 @@ router.post(
         return;
       }
 
-      // Security: this endpoint grants the invitation's role + school to
-      // whatever account is currently authenticated. If that ever isn't the
-      // actual invited person — e.g. someone already signed in (an admin
-      // testing/previewing an invite link, a stale session, a forged
-      // request) hits this with someone else's token — their OWN account
-      // would silently be overwritten with the invite's role and school.
-      // Require the caller's email to match the invited email.
-      const callerEmail = await getAppUserEmail(userId ?? "");
-      if (!callerEmail || callerEmail.toLowerCase().trim() !== invitation.email.toLowerCase().trim()) {
-        res.status(403).json({
-          error: "This invitation was sent to a different email address than the account you're signed in as.",
-        });
+      const normalizedEmail = invitation.email.toLowerCase().trim();
+      const [existingAccount] = await db.select().from(appUsers).where(eq(appUsers.email, normalizedEmail));
+      if (existingAccount) {
+        res.status(409).json({ error: "An account with this email already exists. Please log in instead." });
         return;
       }
 
-      // Update the invitee's profile with the role and school from the invitation
-      const { error: profileError } = await supabaseAdmin
-        .from("profiles")
-        .update({
-          role: invitation.role,
-          school_id: invitation.school_id,
-        })
-        .eq("id", userId);
+      const userId = randomUUID();
+      const passwordHash = await hashPassword(password);
+      await db.insert(appUsers).values({ id: userId, email: normalizedEmail, passwordHash });
+
+      // Create the invitee's profile with the role and school from the invitation
+      const { error: profileError } = await supabaseAdmin.from("profiles").insert({
+        id: userId,
+        first_name: firstName ?? "",
+        last_name: lastName ?? "",
+        phone: phone ?? null,
+        role: invitation.role,
+        school_id: invitation.school_id,
+      });
 
       if (profileError) {
-        console.error("[invitations] profile update error:", profileError);
-        res.status(500).json({ error: "Failed to update profile" });
+        await db.delete(appUsers).where(eq(appUsers.id, userId));
+        console.error("[invitations] profile insert error:", profileError);
+        res.status(500).json({ error: "Failed to create account" });
         return;
       }
 
@@ -360,15 +369,16 @@ router.post(
 
       // Send welcome email (non-blocking)
       try {
-        const [profileRes, schoolRes] = await Promise.all([
-          supabaseAdmin.from("profiles").select("first_name").eq("id", userId!).single(),
-          supabaseAdmin.from("schools").select("name").eq("id", invitation.school_id).single(),
-        ]);
+        const { data: schoolRes } = await supabaseAdmin
+          .from("schools")
+          .select("name")
+          .eq("id", invitation.school_id)
+          .single();
         const appUrl = process.env.APP_URL ?? "https://solomonquest.com";
         sendWelcomeEmail({
-          to: callerEmail,
-          firstName: (profileRes.data as any)?.first_name || "there",
-          schoolName: (schoolRes.data as any)?.name,
+          to: normalizedEmail,
+          firstName: firstName ?? "there",
+          schoolName: (schoolRes as any)?.name,
           role: invitation.role,
           loginUrl: `${appUrl}/auth/login`,
         });
@@ -376,7 +386,14 @@ router.post(
         console.warn("[invitations] Could not send welcome email:", e);
       }
 
-      res.json({ success: true, role: invitation.role, schoolId: invitation.school_id });
+      const accessToken = signAuthToken(userId);
+      res.json({
+        success: true,
+        accessToken,
+        refreshToken: accessToken,
+        role: invitation.role,
+        schoolId: invitation.school_id,
+      });
     } catch (err: any) {
       console.error("[invitations] Unhandled error in POST /invitations/accept/:token:", err);
       res.status(500).json({ error: err?.message ?? "Internal server error" });

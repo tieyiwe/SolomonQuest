@@ -1,17 +1,27 @@
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
- * Pre-Clerk account directory. Auth now runs on Clerk (see api-server's
- * lib/clerk.ts / lib/profile-resolution.ts) — this table isn't used to log
- * anyone in anymore. It's kept only as a one-time lookup so a returning
- * tester who had an account before the Clerk cutover gets their existing
- * profile (courses, grades, history) relinked to their new Clerk id by
- * matching email, instead of ending up with a duplicate blank profile.
- * Safe to drop once every pre-Clerk account has either signed back in or
- * been abandoned.
+ * Our own account/credentials table, replacing Supabase Auth's `auth.users`.
+ * Lives in this app's own Postgres (DATABASE_URL — Replit's own database),
+ * separate from the rest of the app's data which still lives in Supabase
+ * Postgres for now. `id` is a plain UUID generated at signup time and is
+ * also used as `profiles.id` on the Supabase side — there's no live
+ * cross-database foreign key (Postgres can't do that), so referential
+ * integrity between the two databases is enforced in application code
+ * instead of a DB constraint.
  */
 export const appUsers = pgTable("app_users", {
   id: uuid("id").primaryKey(),
   email: text("email").notNull().unique(),
+  passwordHash: text("password_hash"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  token: text("token").primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => appUsers.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
 });

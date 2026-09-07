@@ -1,10 +1,25 @@
 import { useState, useEffect } from "react";
 import { useLocation, useParams } from "wouter";
-import { SignUp, useUser } from "@clerk/clerk-react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { auth } from "@/lib/session";
+import { Button } from "@/components/ui/button";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Loader2, CheckCircle2, XCircle } from "lucide-react";
+
+const schema = z.object({
+  firstName: z.string().min(2, "First name is required"),
+  lastName: z.string().min(2, "Last name is required"),
+  phone: z.string().min(7, "Please enter a valid phone number"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+type FormValues = z.infer<typeof schema>;
 
 interface InviteDetails {
   email: string;
@@ -16,18 +31,17 @@ export default function AcceptInvitePage() {
   const params = useParams<{ token: string }>();
   const token = params.token;
   const [, setLocation] = useLocation();
-  const { isSignedIn } = useUser();
   const [invite, setInvite] = useState<InviteDetails | null>(null);
   const [inviteError, setInviteError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [accepting, setAccepting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     if (!token) return;
     fetch(`/api/invitations/accept/${token}`)
-      .then((r) => r.json())
-      .then((data) => {
+      .then(r => r.json())
+      .then(data => {
         if (data.error) setInviteError(data.error);
         else setInvite(data);
       })
@@ -35,38 +49,48 @@ export default function AcceptInvitePage() {
       .finally(() => setLoading(false));
   }, [token]);
 
-  // Once Clerk finishes sign-up (using the invite's email, pre-filled
-  // below), apply the invitation's role + school to the new profile.
-  useEffect(() => {
-    if (!isSignedIn || !invite || accepting || success) return;
-    setAccepting(true);
-    (async () => {
-      try {
-        const clerk = (window as any).Clerk;
-        const clerkToken = await clerk?.session?.getToken();
-        const res = await fetch(`/api/invitations/accept/${token}`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${clerkToken}` },
-        });
-        const result = await res.json();
-        if (!res.ok) throw new Error(result.error || "Failed to accept invitation");
+  const form = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { firstName: "", lastName: "", phone: "", password: "" },
+  });
 
-        setSuccess(true);
-        toast.success("Account created! Welcome to " + invite.schoolName);
+  async function onSubmit(data: FormValues) {
+    if (!invite) return;
+    setSubmitting(true);
+    try {
+      // The account is created server-side by this same call, using the
+      // invitation's email — there's no separate sign-up step.
+      const res = await fetch(`/api/invitations/accept/${token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: data.password,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          phone: data.phone,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to accept invitation");
 
-        setTimeout(() => {
-          const role = invite.role;
-          if (role === "teacher") setLocation("/dashboard/teacher");
-          else if (role === "staff" || role === "student") setLocation("/dashboard/student");
-          else if (role === "admin" || role === "super_admin") setLocation("/dashboard/admin");
-          else setLocation("/dashboard/student");
-        }, 1500);
-      } catch (err: unknown) {
-        toast.error(err instanceof Error ? err.message : "Something went wrong");
-        setAccepting(false);
-      }
-    })();
-  }, [isSignedIn, invite]);
+      await auth.setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
+
+      setSuccess(true);
+      toast.success("Account created! Welcome to " + invite.schoolName);
+
+      setTimeout(() => {
+        const role = invite.role;
+        if (role === "teacher") setLocation("/dashboard/teacher");
+        else if (role === "staff" || role === "student") setLocation("/dashboard/student");
+        else if (role === "admin" || role === "super_admin") setLocation("/dashboard/admin");
+        else setLocation("/dashboard/student");
+      }, 1500);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -93,23 +117,14 @@ export default function AcceptInvitePage() {
     );
   }
 
-  if (success || accepting) {
+  if (success) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <Card className="w-full max-w-md text-center">
           <CardHeader>
-            {success ? (
-              <>
-                <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-2" />
-                <CardTitle>Welcome aboard!</CardTitle>
-                <CardDescription>Taking you to your dashboard...</CardDescription>
-              </>
-            ) : (
-              <>
-                <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
-                <CardTitle>Setting up your account...</CardTitle>
-              </>
-            )}
+            <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-2" />
+            <CardTitle>Welcome aboard!</CardTitle>
+            <CardDescription>Taking you to your dashboard...</CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -129,11 +144,53 @@ export default function AcceptInvitePage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <SignUp
-            routing="virtual"
-            initialValues={{ emailAddress: invite?.email }}
-            appearance={{ elements: { rootBox: "w-full", card: "shadow-none p-0 w-full" } }}
-          />
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <FormField control={form.control} name="firstName" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>First Name</FormLabel>
+                    <FormControl><Input placeholder="Jane" className="min-h-[44px]" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="lastName" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Last Name</FormLabel>
+                    <FormControl><Input placeholder="Smith" className="min-h-[44px]" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+
+              {/* Email — readonly, pre-filled from invitation */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Email</label>
+                <Input value={invite?.email ?? ""} readOnly disabled className="min-h-[44px] bg-muted" />
+              </div>
+
+              <FormField control={form.control} name="phone" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Phone Number</FormLabel>
+                  <FormControl><Input placeholder="+1 (555) 000-0000" type="tel" className="min-h-[44px]" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+
+              <FormField control={form.control} name="password" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Create Password</FormLabel>
+                  <FormControl><Input placeholder="••••••••" type="password" className="min-h-[44px]" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+
+              <Button type="submit" className="w-full min-h-[48px] text-base" disabled={submitting}>
+                {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Accept Invitation & Create Account
+              </Button>
+            </form>
+          </Form>
         </CardContent>
       </Card>
     </div>

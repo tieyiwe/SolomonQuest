@@ -8,23 +8,19 @@ export interface LinkedSchool {
   userId: string;
   role: string;
   email: string;
-  clerkSessionId: string;
+  access_token: string;
+  refresh_token: string;
 }
 
 /**
- * Each school account on this platform is a fully separate Clerk user (its
- * own email/password) — there's no single identity that spans schools.
- * "Switching schools" here means: Clerk keeps every account you've signed
- * into on this device as a session in its client (multi-session support),
- * and switching is just telling Clerk which of those sessions is active —
- * no token juggling needed, Clerk already persists them. We only need to
- * remember which Clerk session id belongs to which school, so the switcher
- * UI can show a friendly list instead of raw session ids.
+ * Each school account on this platform is a fully separate Supabase auth
+ * user (its own email/password) — there's no single identity that spans
+ * schools. "Switching schools" here means: once you've successfully logged
+ * into a second school's account from this device and chosen to remember
+ * it, we keep that account's session tokens in localStorage so switching
+ * back is instant (no login box) next time. An account you haven't logged
+ * into yet on this device always needs the login box first.
  */
-
-function getClerk(): any {
-  return (window as any).Clerk;
-}
 
 function readLinked(): LinkedSchool[] {
   try {
@@ -77,10 +73,8 @@ async function fetchMe(accessToken: string): Promise<{ id: string; role: string;
 
 /** Saves the CURRENTLY active session as a linked school, so switching back to it is instant too. */
 export async function linkCurrentSession(): Promise<void> {
-  const clerk = getClerk();
-  const sessionId: string | undefined = clerk?.session?.id;
   const { data: { session } } = await auth.getSession();
-  if (!session || !sessionId) return;
+  if (!session) return;
   const [me, school] = await Promise.all([fetchMe(session.access_token), fetchCurrentSchool(session.access_token)]);
   if (!me || !school) return;
   saveLinkedSchool({
@@ -89,28 +83,31 @@ export async function linkCurrentSession(): Promise<void> {
     userId: me.id,
     role: me.role,
     email: me.email,
-    clerkSessionId: sessionId,
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
   });
 }
 
-/** Instantly switches into a previously-linked school's saved Clerk session. */
+/** Instantly switches into a previously-linked school's saved session. */
 export async function switchToLinkedSchool(schoolId: string): Promise<void> {
   const entry = readLinked().find((s) => s.schoolId === schoolId);
   if (!entry) throw new Error("This school isn't linked yet");
 
-  const clerk = getClerk();
-  const stillActive = clerk?.client?.sessions?.some((s: any) => s.id === entry.clerkSessionId);
-  if (!stillActive) {
+  const { data, error } = await auth.setSession({
+    access_token: entry.access_token,
+    refresh_token: entry.refresh_token,
+  });
+
+  if (error || !data.session) {
+    // The saved refresh token expired/was revoked — drop it so the UI
+    // falls back to showing the login box next time.
     removeLinkedSchool(schoolId);
     throw new Error("Your saved login for this school expired. Please log in again.");
   }
 
-  try {
-    await clerk.setActive({ session: entry.clerkSessionId });
-  } catch {
-    removeLinkedSchool(schoolId);
-    throw new Error("Your saved login for this school expired. Please log in again.");
-  }
+  // Supabase rotates refresh tokens on use — persist the new one so the
+  // NEXT switch also works instead of silently going stale after one use.
+  saveLinkedSchool({ ...entry, access_token: data.session.access_token, refresh_token: data.session.refresh_token });
 
   window.location.href = dashboardPathFor(entry.role);
 }
@@ -128,19 +125,14 @@ export async function loginToSchool(
 ): Promise<{ schoolName: string; role: string }> {
   await linkCurrentSession().catch(() => {});
 
-  const clerk = getClerk();
-  const signInAttempt = await clerk.client.signIn.create({ identifier: email, password });
-  if (signInAttempt.status !== "complete" || !signInAttempt.createdSessionId) {
-    throw new Error("Invalid email or password");
+  const { data, error } = await auth.signInWithPassword({ email, password });
+  if (error || !data.session) {
+    throw new Error(error?.message ?? "Invalid email or password");
   }
-  await clerk.setActive({ session: signInAttempt.createdSessionId });
-
-  const { data: { session } } = await auth.getSession();
-  if (!session) throw new Error("Failed to load account details");
 
   const [me, school] = await Promise.all([
-    fetchMe(session.access_token),
-    fetchCurrentSchool(session.access_token),
+    fetchMe(data.session.access_token),
+    fetchCurrentSchool(data.session.access_token),
   ]);
   if (!me || !school) throw new Error("Failed to load account details");
 
@@ -151,7 +143,8 @@ export async function loginToSchool(
       userId: me.id,
       role: me.role,
       email: me.email,
-      clerkSessionId: signInAttempt.createdSessionId,
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
     });
   }
 

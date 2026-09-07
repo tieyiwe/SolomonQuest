@@ -1,70 +1,55 @@
-import { supabaseAdmin } from "./supabase";
-import { clerkClient, getClerkUserEmail } from "./clerk";
+import { randomBytes } from "crypto";
+import { eq, inArray } from "drizzle-orm";
+import { db, appUsers, passwordResetTokens } from "@workspace/db";
+import { hashPassword } from "./auth-jwt";
 
-/**
- * Compatibility layer for the handful of places that used to call
- * `supabaseAdmin.auth.admin.*` to look up/manage a user's login account.
- * Auth now lives in Clerk, and every call site here works with this app's
- * internal profile id (a uuid) rather than a Clerk id directly — so each
- * helper first resolves the profile's linked `clerk_user_id`.
- */
-
-async function clerkIdForProfile(profileId: string): Promise<string | null> {
-  const { data } = await supabaseAdmin
-    .from("profiles")
-    .select("clerk_user_id")
-    .eq("id", profileId)
-    .maybeSingle();
-  return (data?.clerk_user_id as string | null) ?? null;
+/** Drop-in-ish replacement for supabaseAdmin.auth.admin.getUserById(id).data.user?.email */
+export async function getAppUserEmail(id: string): Promise<string | null> {
+  const [account] = await db.select().from(appUsers).where(eq(appUsers.id, id));
+  return account?.email ?? null;
 }
 
-export async function getAppUserEmail(profileId: string): Promise<string | null> {
-  const clerkId = await clerkIdForProfile(profileId);
-  if (!clerkId) return null;
-  return getClerkUserEmail(clerkId);
-}
-
-/** Batch email lookup for list views. */
-export async function getAppUserEmails(profileIds: string[]): Promise<Record<string, string>> {
-  if (profileIds.length === 0) return {};
-  const { data } = await supabaseAdmin
-    .from("profiles")
-    .select("id, clerk_user_id")
-    .in("id", profileIds);
-
+/** Batch email lookup for list views that used to loop auth.admin.getUserById per row. */
+export async function getAppUserEmails(ids: string[]): Promise<Record<string, string>> {
+  if (ids.length === 0) return {};
+  const rows = await db.select().from(appUsers).where(inArray(appUsers.id, ids));
   const map: Record<string, string> = {};
-  await Promise.all(
-    (data ?? []).map(async (p) => {
-      const clerkId = p.clerk_user_id as string | null;
-      if (!clerkId) return;
-      const email = await getClerkUserEmail(clerkId);
-      if (email) map[p.id as string] = email;
-    })
-  );
+  for (const row of rows) map[row.id] = row.email;
   return map;
 }
 
-/** Deletes the user's Clerk login account (their profile row is deleted separately by the caller). */
-export async function deleteAppUser(profileId: string): Promise<void> {
-  const clerkId = await clerkIdForProfile(profileId);
-  if (!clerkId) return;
-  try {
-    await clerkClient.users.deleteUser(clerkId);
-  } catch {
-    // Best-effort — the profile row is still removed by the caller either way.
-  }
+/** Replacement for supabaseAdmin.auth.admin.deleteUser(id) — removes the login account. */
+export async function deleteAppUser(id: string): Promise<void> {
+  await db.delete(appUsers).where(eq(appUsers.id, id));
 }
 
-/** Admin-set password. Returns false if the target has no linked Clerk account yet. */
-export async function setAppUserPassword(profileId: string, newPassword: string): Promise<boolean> {
-  const clerkId = await clerkIdForProfile(profileId);
-  if (!clerkId) return false;
-  try {
-    await clerkClient.users.updateUser(clerkId, { password: newPassword });
-    return true;
-  } catch {
-    return false;
-  }
+export async function countAppUsers(): Promise<number> {
+  const rows = await db.select({ id: appUsers.id }).from(appUsers);
+  return rows.length;
+}
+
+/**
+ * Generates a password-reset token for an admin-triggered "send reset email"
+ * action, replacing supabaseAdmin.auth.admin.generateLink({type:"recovery"}).
+ * Returns null if the user has no account on file.
+ */
+export async function generatePasswordResetLink(userId: string): Promise<string | null> {
+  const [account] = await db.select().from(appUsers).where(eq(appUsers.id, userId));
+  if (!account) return null;
+
+  const token = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+  await db.insert(passwordResetTokens).values({ token, userId, expiresAt });
+
+  const appUrl = process.env.APP_URL ?? "";
+  return `${appUrl}/auth/reset-password?token=${token}`;
+}
+
+/** Replacement for supabaseAdmin.auth.admin.updateUserById(id, {password}). */
+export async function setAppUserPassword(userId: string, newPassword: string): Promise<boolean> {
+  const passwordHash = await hashPassword(newPassword);
+  const result = await db.update(appUsers).set({ passwordHash }).where(eq(appUsers.id, userId));
+  return (result.rowCount ?? 0) > 0;
 }
 
 /**
@@ -75,20 +60,20 @@ export async function setAppUserPassword(profileId: string, newPassword: string)
  * mechanical rename rather than a per-call-site rewrite.
  */
 export const appAuthAdmin = {
-  async getUserById(profileId: string): Promise<{ data: { user: { id: string; email: string } | null } }> {
-    const email = await getAppUserEmail(profileId);
-    return { data: { user: email ? { id: profileId, email } : null } };
+  async getUserById(id: string): Promise<{ data: { user: { id: string; email: string } | null } }> {
+    const [account] = await db.select().from(appUsers).where(eq(appUsers.id, id));
+    return { data: { user: account ? { id: account.id, email: account.email } : null } };
   },
-  async deleteUser(profileId: string): Promise<{ error: { message: string } | null }> {
-    await deleteAppUser(profileId);
+  async deleteUser(id: string): Promise<{ error: { message: string } | null }> {
+    await deleteAppUser(id);
     return { error: null };
   },
   async updateUserById(
-    profileId: string,
+    id: string,
     attrs: { password?: string }
   ): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-    if (!attrs.password) return { data: { id: profileId }, error: null };
-    const ok = await setAppUserPassword(profileId, attrs.password);
-    return ok ? { data: { id: profileId }, error: null } : { data: null, error: { message: "User has no linked login account" } };
+    if (!attrs.password) return { data: { id }, error: null };
+    const ok = await setAppUserPassword(id, attrs.password);
+    return ok ? { data: { id }, error: null } : { data: null, error: { message: "User not found" } };
   },
 };
