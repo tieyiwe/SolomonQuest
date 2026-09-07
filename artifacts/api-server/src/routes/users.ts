@@ -690,6 +690,54 @@ router.patch("/users/:id/test-mode", requireAuth, async (req: AuthenticatedReque
 });
 
 // POST /users/:id/reset-password - admin sends password reset email to user
+// POST /users/admin/reset-password - admin resets a user's password; same-school constraint
+//
+// Bug: this was registered AFTER /users/:id/reset-password below, and both
+// are 3-segment paths (/users/<x>/reset-password) — Express matches routes
+// in registration order, so every request here was actually caught by the
+// :id route first with id="admin" (a profile lookup that never matches),
+// silently 404ing instead of resetting anyone's password. Registering it
+// first fixes that; the :id route still matches any real id since "admin"
+// is no longer ambiguous once this specific path is checked first.
+router.post("/users/admin/reset-password", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  if (req.userRole !== "admin" && req.userRole !== "super_admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { user_id, new_password } = req.body;
+
+  if (!user_id || !new_password) {
+    res.status(400).json({ error: "user_id and new_password are required" });
+    return;
+  }
+
+  // Verify target user belongs to the same school (unless super_admin)
+  if (req.userRole !== "super_admin") {
+    const { data: targetProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("school_id")
+      .eq("id", user_id)
+      .single();
+
+    if (!targetProfile || targetProfile.school_id !== req.schoolId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+  }
+
+  const { data, error } = await supabaseAdmin.auth.admin.updateUserById(user_id, {
+    password: new_password,
+  });
+
+  if (error || !data) {
+    res.status(500).json({ error: "Failed to reset password" });
+    return;
+  }
+
+  res.json({ success: true });
+});
+
 router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
@@ -745,46 +793,6 @@ router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedR
   });
 
   res.json({ success: true, message: "Password reset email sent" });
-});
-
-// POST /users/admin/reset-password - admin resets a user's password; same-school constraint
-router.post("/users/admin/reset-password", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
-  if (req.userRole !== "admin" && req.userRole !== "super_admin") {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
-
-  const { user_id, new_password } = req.body;
-
-  if (!user_id || !new_password) {
-    res.status(400).json({ error: "user_id and new_password are required" });
-    return;
-  }
-
-  // Verify target user belongs to the same school (unless super_admin)
-  if (req.userRole !== "super_admin") {
-    const { data: targetProfile } = await supabaseAdmin
-      .from("profiles")
-      .select("school_id")
-      .eq("id", user_id)
-      .single();
-
-    if (!targetProfile || targetProfile.school_id !== req.schoolId) {
-      res.status(403).json({ error: "Forbidden" });
-      return;
-    }
-  }
-
-  const { data, error } = await supabaseAdmin.auth.admin.updateUserById(user_id, {
-    password: new_password,
-  });
-
-  if (error || !data) {
-    res.status(500).json({ error: "Failed to reset password" });
-    return;
-  }
-
-  res.json({ success: true });
 });
 
 export default router;

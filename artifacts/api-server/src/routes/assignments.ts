@@ -105,6 +105,27 @@ router.get("/assignments", requireAuth, async (req: AuthenticatedRequest, res): 
     return;
   }
 
+  // Security: this previously had no tenant check at all — any
+  // authenticated user could pass any other school's course_id and read
+  // its (published) assignment list, since only role determined whether
+  // drafts were included, never whether the course belonged to the
+  // caller's school.
+  const { data: courseForAccess } = await supabaseAdmin
+    .from("courses")
+    .select("school_id, title")
+    .eq("id", courseId)
+    .maybeSingle();
+
+  if (!courseForAccess) {
+    res.status(404).json({ error: "Course not found" });
+    return;
+  }
+
+  if (req.userRole !== "super_admin" && courseForAccess.school_id !== req.schoolId) {
+    res.status(404).json({ error: "Course not found" });
+    return;
+  }
+
   let query = supabaseAdmin
     .from("assignments")
     .select("*")
@@ -130,7 +151,7 @@ router.get("/assignments", requireAuth, async (req: AuthenticatedRequest, res): 
   // since the whole list is already scoped to one course_id) — a course
   // with 20 assignments meant 60+ extra round-trips to render one page.
   // Batched into 3 queries total regardless of list size.
-  const [submissionCountRows, mySubmissionRows, courseRow] = await Promise.all([
+  const [submissionCountRows, mySubmissionRows] = await Promise.all([
     assignmentIds.length > 0
       ? supabaseAdmin.from("submissions").select("assignment_id").in("assignment_id", assignmentIds)
       : Promise.resolve({ data: [] as { assignment_id: string }[] }),
@@ -141,7 +162,6 @@ router.get("/assignments", requireAuth, async (req: AuthenticatedRequest, res): 
           .in("assignment_id", assignmentIds)
           .eq("student_id", userId)
       : Promise.resolve({ data: [] as { assignment_id: string }[] }),
-    supabaseAdmin.from("courses").select("title").eq("id", courseId).maybeSingle(),
   ]);
 
   const submissionCounts = new Map<string, number>();
@@ -150,7 +170,7 @@ router.get("/assignments", requireAuth, async (req: AuthenticatedRequest, res): 
     submissionCounts.set(id, (submissionCounts.get(id) ?? 0) + 1);
   }
   const submittedSet = new Set((mySubmissionRows.data ?? []).map((row) => row.assignment_id as string));
-  const courseTitle = (courseRow.data as { title?: string } | null)?.title ?? null;
+  const courseTitle = courseForAccess.title ?? null;
 
   const enriched = (assignments ?? []).map((a: Record<string, unknown>) => ({
     ...enrichAssignmentFields(a, courseTitle),
@@ -181,6 +201,18 @@ router.post("/assignments", requireAuth, async (req: AuthenticatedRequest, res):
   }
   if (due_date && isNaN(Date.parse(due_date))) {
     res.status(400).json({ error: "due_date must be a valid date" });
+    return;
+  }
+
+  // Security: this was the only write route in this file that never
+  // checked the course actually belonged to the caller (every other
+  // create/update/delete route calls assertCanManageAssignmentCourse) — a
+  // teacher or admin in any school could create (and immediately publish,
+  // triggering a student notification blast) an assignment against any
+  // other school's course_id.
+  const access = await assertCanManageAssignmentCourse(course_id, req.userId, role);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
     return;
   }
 
@@ -315,14 +347,39 @@ router.delete("/assignments/:id", requireAuth, async (req: AuthenticatedRequest,
 });
 
 // List assignments for a course (legacy route by path param)
-router.get("/courses/:courseId/assignments", requireAuth, async (req, res): Promise<void> => {
+router.get("/courses/:courseId/assignments", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   const courseId = Array.isArray(req.params.courseId) ? req.params.courseId[0] : req.params.courseId;
 
-  const { data, error } = await supabaseAdmin
+  // Security: this had no tenant scoping and no draft filtering at all —
+  // any authenticated user of any role could list any other school's
+  // course assignments, drafts included, just by guessing/enumerating a
+  // course id.
+  const { data: course } = await supabaseAdmin
+    .from("courses")
+    .select("school_id")
+    .eq("id", courseId)
+    .maybeSingle();
+
+  if (!course) {
+    res.status(404).json({ error: "Course not found" });
+    return;
+  }
+
+  if (req.userRole !== "super_admin" && course.school_id !== req.schoolId) {
+    res.status(404).json({ error: "Course not found" });
+    return;
+  }
+
+  let query = supabaseAdmin
     .from("assignments")
     .select("*")
-    .eq("course_id", courseId)
-    .order("due_date", { ascending: true });
+    .eq("course_id", courseId);
+
+  if (!isTeacherOrAdmin(req.userRole)) {
+    query = query.eq("is_published", true);
+  }
+
+  const { data, error } = await query.order("due_date", { ascending: true });
 
   if (error) {
     res.status(500).json({ error: error.message });

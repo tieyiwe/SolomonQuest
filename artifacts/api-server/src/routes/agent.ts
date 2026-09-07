@@ -417,6 +417,22 @@ router.post(
             res.status(400).json({ error: "course_id is required for student reminders" });
             return;
           }
+
+          // Security: this never verified the calling teacher actually
+          // teaches course_id, or that it's even in their school — this
+          // endpoint is a plain authenticated REST route (not gated behind
+          // the LLM), so a teacher could target any other school's course
+          // id directly.
+          const { data: reminderCourse } = await supabaseAdmin
+            .from("courses")
+            .select("teacher_id")
+            .eq("id", course_id)
+            .maybeSingle();
+          if (!reminderCourse || reminderCourse.teacher_id !== userId) {
+            res.status(403).json({ error: "You do not teach this course" });
+            return;
+          }
+
           const { data, error } = await supabaseAdmin
             .from("reminders")
             .insert({
@@ -452,6 +468,27 @@ router.post(
         if (userRole !== "admin" && userRole !== "super_admin" && userRole !== "teacher") {
           res.status(403).json({ error: "Not authorized to post announcements" });
           return;
+        }
+
+        // Security: course_id was never checked against the caller — a
+        // teacher/admin could attach an announcement to any other school's
+        // course by id.
+        if (course_id) {
+          const { data: announceCourse } = await supabaseAdmin
+            .from("courses")
+            .select("teacher_id, school_id")
+            .eq("id", course_id)
+            .maybeSingle();
+          if (!announceCourse) {
+            res.status(404).json({ error: "Course not found" });
+            return;
+          }
+          const sameSchool = announceCourse.school_id === schoolId;
+          const ownsCourse = userRole === "teacher" ? announceCourse.teacher_id === userId : true;
+          if (!sameSchool || !ownsCourse) {
+            res.status(403).json({ error: "You do not have access to this course" });
+            return;
+          }
         }
 
         const { data, error } = await supabaseAdmin

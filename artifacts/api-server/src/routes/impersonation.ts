@@ -13,6 +13,15 @@ const router: IRouter = Router();
 // that would be a privilege escalation rather than a same-or-lower preview.
 const IMPERSONATABLE_ROLES = new Set(["teacher", "staff", "student", "admin"]);
 
+// Self-service test_mode switching is meant for previewing same-or-lower
+// privilege accounts (e.g. a teacher checking what a student sees), not for
+// a low-privilege account to hop into a higher one. Without this, granting
+// test_mode_enabled to any single student/staff account handed them a real
+// session as any teacher or staff member in the school — full grading and
+// roster access, well beyond "preview" — since the only checks were
+// same-school and not-admin.
+const ROLE_RANK: Record<string, number> = { student: 0, staff: 0, teacher: 1, admin: 2, super_admin: 3 };
+
 // ─── POST /admin/impersonate/:userId ─────────────────────────────────────────
 // Mints a one-time login link for the target user via the Supabase admin API
 // and hands back just the pieces the client needs to redeem it with
@@ -44,6 +53,8 @@ router.post(
       }
     }
 
+    const callerRank = ROLE_RANK[req.userRole ?? ""] ?? -1;
+
     const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
 
     const { data: target, error } = await supabaseAdmin
@@ -64,6 +75,11 @@ router.post(
 
     if (target.role === "admin" && req.userRole !== "super_admin") {
       res.status(403).json({ error: "Only a super admin can view as an admin" });
+      return;
+    }
+
+    if (!isAdmin && (ROLE_RANK[target.role as string] ?? 99) > callerRank) {
+      res.status(403).json({ error: "Test Mode can only preview accounts at or below your own role" });
       return;
     }
 
