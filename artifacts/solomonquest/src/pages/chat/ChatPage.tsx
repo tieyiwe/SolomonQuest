@@ -2148,8 +2148,13 @@ export default function ChatPage() {
         /* ignore */
       }
     };
+    // isOnline() treats anyone pinged within the last 2 minutes as online,
+    // so a 60s cadence still keeps active users continuously "online" (with
+    // margin for one missed ping) at half the DB writes of the previous 30s
+    // interval — this fires for every open chat tab, for as long as it's
+    // open, so the interval directly multiplies sustained write volume.
     ping();
-    const iv = setInterval(ping, 30_000);
+    const iv = setInterval(ping, 60_000);
     return () => clearInterval(iv);
   }, []);
 

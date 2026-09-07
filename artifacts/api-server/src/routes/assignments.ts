@@ -123,37 +123,40 @@ router.get("/assignments", requireAuth, async (req: AuthenticatedRequest, res): 
   }
 
   const userId = req.userId;
+  const assignmentIds = (assignments ?? []).map((a) => a.id as string);
 
-  const enriched = await Promise.all(
-    (assignments ?? []).map(async (a: Record<string, unknown>) => {
-      // Count submissions
-      const { count: submissionCount } = await supabaseAdmin
-        .from("submissions")
-        .select("id", { count: "exact", head: true })
-        .eq("assignment_id", a.id as string);
-
-      // Check if current user has submitted
-      let hasSubmitted = false;
-      if (userId) {
-        const { data: mySub } = await supabaseAdmin
+  // These used to run per-assignment (submission count + "did I submit"
+  // check + a course-title lookup that's identical for every row here,
+  // since the whole list is already scoped to one course_id) — a course
+  // with 20 assignments meant 60+ extra round-trips to render one page.
+  // Batched into 3 queries total regardless of list size.
+  const [submissionCountRows, mySubmissionRows, courseRow] = await Promise.all([
+    assignmentIds.length > 0
+      ? supabaseAdmin.from("submissions").select("assignment_id").in("assignment_id", assignmentIds)
+      : Promise.resolve({ data: [] as { assignment_id: string }[] }),
+    userId && assignmentIds.length > 0
+      ? supabaseAdmin
           .from("submissions")
-          .select("id, grade, status")
-          .eq("assignment_id", a.id as string)
+          .select("assignment_id")
+          .in("assignment_id", assignmentIds)
           .eq("student_id", userId)
-          .single();
-        if (mySub) {
-          hasSubmitted = true;
-        }
-      }
+      : Promise.resolve({ data: [] as { assignment_id: string }[] }),
+    supabaseAdmin.from("courses").select("title").eq("id", courseId).maybeSingle(),
+  ]);
 
-      const base = await enrichAssignment(a);
-      return {
-        ...base,
-        submissionCount: submissionCount ?? 0,
-        hasSubmitted,
-      };
-    })
-  );
+  const submissionCounts = new Map<string, number>();
+  for (const row of submissionCountRows.data ?? []) {
+    const id = row.assignment_id as string;
+    submissionCounts.set(id, (submissionCounts.get(id) ?? 0) + 1);
+  }
+  const submittedSet = new Set((mySubmissionRows.data ?? []).map((row) => row.assignment_id as string));
+  const courseTitle = (courseRow.data as { title?: string } | null)?.title ?? null;
+
+  const enriched = (assignments ?? []).map((a: Record<string, unknown>) => ({
+    ...enrichAssignmentFields(a, courseTitle),
+    submissionCount: submissionCounts.get(a.id as string) ?? 0,
+    hasSubmitted: submittedSet.has(a.id as string),
+  }));
 
   res.json(enriched);
 });
@@ -517,18 +520,7 @@ async function notifyStudentsOfPublish(courseId: string, referenceId: string, ti
   await supabaseAdmin.from("notifications").insert(notifications);
 }
 
-async function enrichAssignment(a: Record<string, unknown>) {
-  let courseTitle: string | null = null;
-
-  if (a.course_id) {
-    const { data: course } = await supabaseAdmin
-      .from("courses")
-      .select("title")
-      .eq("id", a.course_id as string)
-      .single();
-    if (course) courseTitle = course.title;
-  }
-
+function enrichAssignmentFields(a: Record<string, unknown>, courseTitle: string | null) {
   return {
     id: a.id,
     courseId: a.course_id,
@@ -544,6 +536,21 @@ async function enrichAssignment(a: Record<string, unknown>) {
     videoUrl: (a.video_url as string | null) ?? null,
     requireFullWatch: (a.require_full_watch as boolean) ?? false,
   };
+}
+
+async function enrichAssignment(a: Record<string, unknown>) {
+  let courseTitle: string | null = null;
+
+  if (a.course_id) {
+    const { data: course } = await supabaseAdmin
+      .from("courses")
+      .select("title")
+      .eq("id", a.course_id as string)
+      .single();
+    if (course) courseTitle = course.title;
+  }
+
+  return enrichAssignmentFields(a, courseTitle);
 }
 
 export default router;
