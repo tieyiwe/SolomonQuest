@@ -35,13 +35,10 @@ router.get("/users", requireAuth, async (req: AuthenticatedRequest, res): Promis
     return;
   }
 
-  // Fetch emails from auth
-  const profiles = await Promise.all(
-    (data ?? []).map(async (p) => {
-      const { data: userData } = await supabaseAdmin.auth.admin.getUserById(p.id);
-      return mapProfile(p, userData?.user?.email);
-    })
-  );
+  // Email is denormalized onto profiles (kept in sync by a DB trigger — see
+  // supabase-perf-denormalize-email.sql) specifically so a list of users
+  // doesn't cost one Auth Admin API call per row.
+  const profiles = (data ?? []).map((p) => mapProfile(p, p.email as string | null));
 
   res.json(profiles);
 });
@@ -266,8 +263,7 @@ router.post("/users/me/avatar", requireAuth, async (req: AuthenticatedRequest, r
     return;
   }
 
-  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(req.userId);
-  res.json(mapProfile(data, userData?.user?.email));
+  res.json(mapProfile(data, data.email as string | null));
 });
 
 // Get single user — must be same school (or self), unless super_admin
@@ -293,8 +289,7 @@ router.get("/users/:id", requireAuth, async (req: AuthenticatedRequest, res): Pr
     }
   }
 
-  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
-  res.json(mapProfile(data, userData?.user?.email));
+  res.json(mapProfile(data, data.email as string | null));
 });
 
 // Get a student's full profile (contact info, program/courses, attendance) for
@@ -381,8 +376,7 @@ router.get("/users/:id/detail", requireAuth, async (req: AuthenticatedRequest, r
   };
 
   if (allowedFields.contact) {
-    const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(id);
-    result.email = authUser?.user?.email ?? null;
+    result.email = student.email ?? null;
     result.phone = student.phone ?? null;
   }
 
@@ -468,8 +462,6 @@ router.get("/users/:id/teacher-detail", requireAuth, async (req: AuthenticatedRe
     totalStudents = new Set((enrollments ?? []).map((e) => e.student_id as string)).size;
   }
 
-  const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(id);
-
   res.json({
     id: teacher.id,
     firstName: teacher.first_name,
@@ -478,7 +470,7 @@ router.get("/users/:id/teacher-detail", requireAuth, async (req: AuthenticatedRe
     bio: teacher.bio,
     uniqueStudentId: teacher.unique_student_id,
     joinedSince: teacher.created_at ?? null,
-    email: authUser?.user?.email ?? null,
+    email: teacher.email ?? null,
     phone: teacher.phone ?? null,
     courses: (courses ?? []).map((c) => ({ id: c.id, title: c.title, code: c.code })),
     totalStudents,
@@ -538,8 +530,7 @@ router.patch("/users/:id", requireAuth, async (req: AuthenticatedRequest, res): 
     return;
   }
 
-  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
-  res.json(mapProfile(data, userData?.user?.email));
+  res.json(mapProfile(data, data.email as string | null));
 });
 
 // Update user role — admin/super_admin only, same-school constraint for admin
@@ -616,8 +607,7 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthenticatedRequest, r
     return;
   }
 
-  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
-  res.json(mapProfile(data, userData?.user?.email));
+  res.json(mapProfile(data, data.email as string | null));
 });
 
 function mapProfile(p: Record<string, unknown>, email?: string | null) {
@@ -711,7 +701,7 @@ router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedR
   // Verify target user belongs to the same school (unless super_admin)
   const { data: targetProfile } = await supabaseAdmin
     .from("profiles")
-    .select("school_id, first_name, last_name")
+    .select("school_id, first_name, last_name, email")
     .eq("id", id)
     .single();
 
@@ -725,8 +715,7 @@ router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedR
     return;
   }
 
-  const { data: userData } = await supabaseAdmin.auth.admin.getUserById(id);
-  const userEmail = userData?.user?.email;
+  const userEmail = targetProfile.email as string | null;
 
   if (!userEmail) {
     res.status(400).json({ error: "User has no email address" });

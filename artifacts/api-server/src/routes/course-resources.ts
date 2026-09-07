@@ -254,42 +254,27 @@ async function notifyStudentsOfResource(
   }
 
   try {
-    const { data: usersPage, error: usersError } =
-      await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
-
-    if (usersError) {
-      console.error("[course-resources] Failed to list users:", usersError.message);
-      return;
-    }
-
-    const userMap = new Map<string, { email: string; name?: string }>();
-    for (const u of usersPage.users) {
-      userMap.set(u.id, {
-        email: u.email ?? "",
-        name:
-          ((u.user_metadata?.first_name as string | undefined) ?? "") +
-          " " +
-          ((u.user_metadata?.last_name as string | undefined) ?? ""),
-      });
-    }
-
+    // Email is denormalized onto profiles (see supabase-perf-denormalize-email.sql)
+    // specifically so this doesn't need to pull the entire school's user
+    // directory (up to 1000 rows via listUsers) just to notify a handful
+    // of enrolled students.
     const { data: profiles } = await supabaseAdmin
       .from("profiles")
-      .select("id, first_name, last_name")
+      .select("id, first_name, last_name, email")
       .in("id", studentIds);
 
-    const profileMap = new Map<string, string>();
+    const profileMap = new Map<string, { email: string; name: string }>();
     for (const p of profiles ?? []) {
       const name = [p.first_name, p.last_name].filter(Boolean).join(" ");
-      profileMap.set(p.id as string, name || "Student");
+      if (p.email) profileMap.set(p.id as string, { email: p.email as string, name: name || "Student" });
     }
 
     await Promise.allSettled(
       studentIds.map(async (studentId) => {
-        const userInfo = userMap.get(studentId);
+        const userInfo = profileMap.get(studentId);
         if (!userInfo?.email) return;
 
-        const studentName = profileMap.get(studentId) ?? "Student";
+        const studentName = userInfo.name;
 
         await sendResourceNotification({
           to: userInfo.email,

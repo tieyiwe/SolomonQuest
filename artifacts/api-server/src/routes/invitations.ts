@@ -282,8 +282,12 @@ router.post(
       // request) hits this with someone else's token — their OWN account
       // would silently be overwritten with the invite's role and school.
       // Require the caller's email to match the invited email.
-      const { data: callerAuth } = await supabaseAdmin.auth.admin.getUserById(userId!);
-      const callerEmail = callerAuth?.user?.email?.toLowerCase().trim();
+      const { data: callerProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("email")
+        .eq("id", userId!)
+        .maybeSingle();
+      const callerEmail = (callerProfile?.email as string | null)?.toLowerCase().trim();
       if (!callerEmail || callerEmail !== invitation.email.toLowerCase().trim()) {
         res.status(403).json({
           error: "This invitation was sent to a different email address than the account you're signed in as.",
@@ -355,14 +359,13 @@ router.post(
 
       // Send welcome email (non-blocking)
       try {
-        const [profileRes, schoolRes, authUserRes] = await Promise.all([
+        const [profileRes, schoolRes] = await Promise.all([
           supabaseAdmin.from("profiles").select("first_name, last_name").eq("id", userId!).single(),
           supabaseAdmin.from("schools").select("name").eq("id", invitation.school_id).single(),
-          supabaseAdmin.auth.admin.getUserById(userId!),
         ]);
         const firstName = (profileRes.data as any)?.first_name ?? "there";
         const schoolName = (schoolRes.data as any)?.name;
-        const email = authUserRes.data?.user?.email ?? invitation.email;
+        const email = invitation.email;
         const appUrl = process.env.APP_URL ?? "https://solomonquest.com";
         if (email) {
           sendWelcomeEmail({ to: email, firstName, schoolName, role: invitation.role, loginUrl: `${appUrl}/auth/login` });

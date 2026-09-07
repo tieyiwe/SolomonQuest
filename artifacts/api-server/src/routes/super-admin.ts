@@ -190,7 +190,7 @@ router.get(
             school.owner_id
               ? supabaseAdmin
                   .from("profiles")
-                  .select("first_name, last_name")
+                  .select("first_name, last_name, email")
                   .eq("id", school.owner_id)
                   .single()
               : Promise.resolve({ data: null }),
@@ -210,14 +210,8 @@ router.get(
               .eq("school_id", school.id),
           ]);
 
-          // Fetch owner email from auth
-          let ownerEmail: string | null = null;
-          if (school.owner_id) {
-            const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(school.owner_id);
-            ownerEmail = authUser?.user?.email ?? null;
-          }
-
-          const owner = ownerRes.data as { first_name?: string; last_name?: string } | null;
+          const owner = ownerRes.data as { first_name?: string; last_name?: string; email?: string } | null;
+          const ownerEmail = owner?.email ?? null;
           const ownerName = owner ? `${owner.first_name ?? ""} ${owner.last_name ?? ""}`.trim() : null;
 
           return {
@@ -572,7 +566,7 @@ router.get(
 
       let query = supabaseAdmin
         .from("profiles")
-        .select("id, first_name, last_name, role, school_id, internal_email, created_at");
+        .select("id, first_name, last_name, role, school_id, internal_email, email, created_at");
 
       if (role) query = query.eq("role", role);
       if (school_id) query = query.eq("school_id", school_id);
@@ -606,17 +600,15 @@ router.get(
             schoolName = sc?.name ?? null;
           }
 
-          const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(p.id);
-
           return {
             id: p.id,
             name: `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim(),
-            email: authUser?.user?.email ?? null,
+            email: p.email ?? null,
             internal_email: p.internal_email,
             role: p.role,
             school_name: schoolName,
             created_at: p.created_at,
-            last_sign_in: authUser?.user?.last_sign_in_at ?? null,
+            last_sign_in: null,
           };
         })
       );

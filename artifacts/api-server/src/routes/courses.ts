@@ -343,21 +343,16 @@ router.get("/courses/:id/students", requireAuth, async (req: AuthenticatedReques
     return;
   }
 
-  const withEmails = await Promise.all(
-    (profiles ?? []).map(async (p: Record<string, unknown>) => {
-      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(p.id as string);
-      return {
-        id: p.id,
-        schoolId: p.school_id,
-        role: p.role,
-        firstName: p.first_name,
-        lastName: p.last_name,
-        avatarUrl: p.avatar_url,
-        bio: p.bio,
-        email: authUser?.user?.email ?? null,
-      };
-    })
-  );
+  const withEmails = (profiles ?? []).map((p: Record<string, unknown>) => ({
+    id: p.id,
+    schoolId: p.school_id,
+    role: p.role,
+    firstName: p.first_name,
+    lastName: p.last_name,
+    avatarUrl: p.avatar_url,
+    bio: p.bio,
+    email: (p.email as string | null) ?? null,
+  }));
 
   res.json(withEmails);
 });

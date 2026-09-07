@@ -499,7 +499,7 @@ router.post(
           await Promise.all([
             supabaseAdmin
               .from("profiles")
-              .select("id, first_name, last_name")
+              .select("id, first_name, last_name, email")
               .eq("school_id", schoolId)
               .eq("role", target_role),
             supabaseAdmin.from("schools").select("name").eq("id", schoolId).single(),
@@ -520,8 +520,7 @@ router.post(
         if (method === "email") {
           const results = await Promise.allSettled(
             recipients.map(async (r: any) => {
-              const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(r.id);
-              const email = authUser?.user?.email;
+              const email = r.email as string | null;
               if (!email) return;
               await sendBroadcastEmail({
                 to: email,
