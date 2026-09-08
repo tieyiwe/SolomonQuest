@@ -66,6 +66,7 @@ import {
   Send,
   Eye,
   Upload,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -396,8 +397,35 @@ function UserTable({
     );
   }
 
+  const handleExport = () => {
+    const headers = ["First Name", "Last Name", "Email", "Role", "Unique Student ID"];
+    const rows = filtered.map((u) => [
+      u.firstName ?? "",
+      u.lastName ?? "",
+      u.email ?? "",
+      u.role ?? "",
+      (u as any).uniqueStudentId ?? "",
+    ]);
+    const csv = [headers, ...rows]
+      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${role ?? "users"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
+    <div className="flex justify-end px-4 pt-3">
+      <Button size="sm" variant="outline" onClick={handleExport}>
+        <Download className="mr-2 h-4 w-4" />
+        Export CSV
+      </Button>
+    </div>
     <Table>
       <TableHeader>
         <TableRow className="bg-gray-50/50">
@@ -517,16 +545,20 @@ function InviteButton({
   role,
   onSent,
 }: {
-  role: "teacher" | "staff" | "student";
+  role: "teacher" | "staff" | "student" | "parent";
   onSent: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [programId, setProgramId] = useState("");
+  const [studentId, setStudentId] = useState("");
   const [loading, setLoading] = useState(false);
-  const roleLabel = role === "teacher" ? "Teacher" : role === "staff" ? "Staff Member" : "Student";
-  const placeholder = role === "teacher" ? "teacher@school.edu" : role === "staff" ? "staff@school.edu" : "student@school.edu";
+  const roleLabel =
+    role === "teacher" ? "Teacher" : role === "staff" ? "Staff Member" : role === "parent" ? "Parent/Guardian" : "Student";
+  const placeholder =
+    role === "teacher" ? "teacher@school.edu" : role === "staff" ? "staff@school.edu" : role === "parent" ? "parent@example.com" : "student@school.edu";
   const { data: programs } = useListPrograms({ query: { enabled: role === "student" && open } });
+  const { data: students } = useListUsers({ role: "student" }, { query: { enabled: role === "parent" && open } });
 
   const handleSend = async () => {
     if (!email.trim()) return;
@@ -539,6 +571,10 @@ function InviteButton({
       toast.error("Select a program before sending a student invitation");
       return;
     }
+    if (role === "parent" && !studentId) {
+      toast.error("Select the student before sending a parent invitation");
+      return;
+    }
     setLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -548,7 +584,12 @@ function InviteButton({
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token}`,
         },
-        body: JSON.stringify({ email: email.trim(), role, programId: role === "student" && programId ? programId : undefined }),
+        body: JSON.stringify({
+          email: email.trim(),
+          role,
+          programId: role === "student" && programId ? programId : undefined,
+          studentId: role === "parent" && studentId ? studentId : undefined,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -558,6 +599,7 @@ function InviteButton({
       toast.success(`Invitation sent to ${email.trim()}`);
       setEmail("");
       setProgramId("");
+      setStudentId("");
       setOpen(false);
     } catch (err: any) {
       toast.error(err.message || "Failed to send invitation");
@@ -610,11 +652,41 @@ function InviteButton({
               </p>
             </div>
           )}
+          {role === "parent" && (
+            <div className="space-y-1.5">
+              <Label>Student *</Label>
+              <Select value={studentId} onValueChange={setStudentId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select the student..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {(students ?? []).map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.firstName} {s.lastName}
+                      {(s as any).uniqueStudentId ? ` (${(s as any).uniqueStudentId})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                They'll be linked to this student's grades, attendance, and tuition as soon as they accept.
+              </p>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             They'll receive an email to create their account and join your school as a{" "}
             {roleLabel.toLowerCase()}.
           </p>
-          <Button className="w-full" onClick={handleSend} disabled={loading || !email.trim() || (role === "student" && !programId)}>
+          <Button
+            className="w-full"
+            onClick={handleSend}
+            disabled={
+              loading ||
+              !email.trim() ||
+              (role === "student" && !programId) ||
+              (role === "parent" && !studentId)
+            }
+          >
             {loading ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -985,6 +1057,7 @@ export default function AdminUsers() {
               { value: "teachers", label: "Teachers", icon: Users },
               { value: "students", label: "Students", icon: GraduationCap },
               { value: "staff", label: "Staff", icon: Briefcase },
+              { value: "parents", label: "Parents", icon: Users },
               { value: "invitations", label: "Invitations", icon: Mail },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -1058,6 +1131,24 @@ export default function AdminUsers() {
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pending Invitations</p>
               </div>
               <InvitationsTab refreshKey={inviteRefreshKey} roleFilter="staff" hideAccepted />
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="parents" className="mt-0 space-y-4">
+            <Card className="border-0 shadow-sm">
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <p className="text-sm text-muted-foreground">Parent/guardian accounts linked to your students.</p>
+                <InviteButton role="parent" onSent={addInvite} />
+              </div>
+              <CardContent className="p-0">
+                <UserTable role="parent" search={search} />
+              </CardContent>
+            </Card>
+            <Card className="border-0 shadow-sm overflow-hidden">
+              <div className="px-4 py-2.5 border-b bg-gray-50/50">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pending Invitations</p>
+              </div>
+              <InvitationsTab refreshKey={inviteRefreshKey} roleFilter="parent" hideAccepted />
             </Card>
           </TabsContent>
 

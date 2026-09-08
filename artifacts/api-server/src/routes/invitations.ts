@@ -12,6 +12,7 @@ interface CreateInviteParams {
   email: string;
   role: string;
   programId?: string | null;
+  studentId?: string | null;
   schoolId: string;
   invitedBy: string;
 }
@@ -27,13 +28,13 @@ type CreateInviteResult =
  * program-required-for-students check a one-off invite enforces).
  */
 async function createInvitation(params: CreateInviteParams): Promise<CreateInviteResult> {
-  const { email, role, programId, schoolId, invitedBy } = params;
+  const { email, role, programId, studentId, schoolId, invitedBy } = params;
 
   if (!email || !email.includes("@")) {
     return { ok: false, email, error: "Missing or invalid email" };
   }
 
-  const validRoles = ["teacher", "staff", "student"];
+  const validRoles = ["teacher", "staff", "student", "parent"];
   if (!validRoles.includes(role)) {
     return { ok: false, email, error: `Invalid role "${role}"` };
   }
@@ -46,6 +47,14 @@ async function createInvitation(params: CreateInviteParams): Promise<CreateInvit
     return { ok: false, email, error: "A program is required to invite a student" };
   }
 
+  if (studentId && role !== "parent") {
+    return { ok: false, email, error: "studentId only applies to parent invitations" };
+  }
+
+  if (role === "parent" && !studentId) {
+    return { ok: false, email, error: "A student must be selected to invite a parent/guardian" };
+  }
+
   if (programId) {
     const { data: program } = await supabaseAdmin
       .from("programs")
@@ -55,6 +64,19 @@ async function createInvitation(params: CreateInviteParams): Promise<CreateInvit
       .maybeSingle();
     if (!program) {
       return { ok: false, email, error: "Program not found" };
+    }
+  }
+
+  if (studentId) {
+    const { data: student } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("id", studentId)
+      .eq("school_id", schoolId)
+      .eq("role", "student")
+      .maybeSingle();
+    if (!student) {
+      return { ok: false, email, error: "Student not found" };
     }
   }
 
@@ -70,6 +92,7 @@ async function createInvitation(params: CreateInviteParams): Promise<CreateInvit
       status: "pending",
       expires_at: expiresAt,
       program_id: programId ?? null,
+      student_id: studentId ?? null,
     })
     .select()
     .single();
@@ -114,7 +137,12 @@ router.post(
         return;
       }
 
-      const { email, role = "teacher", programId } = req.body as { email?: string; role?: string; programId?: string };
+      const { email, role = "teacher", programId, studentId } = req.body as {
+        email?: string;
+        role?: string;
+        programId?: string;
+        studentId?: string;
+      };
 
       if (!schoolId) {
         res.status(400).json({ error: "No school associated with this account" });
@@ -125,12 +153,13 @@ router.post(
         email: email ?? "",
         role,
         programId,
+        studentId,
         schoolId,
         invitedBy: userId ?? "",
       });
 
       if (!result.ok) {
-        const status = result.error === "Program not found" ? 404 : 400;
+        const status = result.error === "Program not found" || result.error === "Student not found" ? 404 : 400;
         res.status(status).json({ error: result.error });
         return;
       }
@@ -362,7 +391,7 @@ router.post(
 
       const { data: invitation, error } = await supabaseAdmin
         .from("invitations")
-        .select("id, email, role, status, expires_at, school_id, invited_by, program_id")
+        .select("id, email, role, status, expires_at, school_id, invited_by, program_id, student_id")
         .eq("token", token)
         .single();
 
@@ -450,6 +479,21 @@ router.post(
               body: `You've been added to the ${program?.name ?? "your"} program and enrolled in its courses.`,
               link: "/dashboard/student",
             }).catch((e) => console.warn("[invitations] program notify error:", e));
+          });
+      }
+
+      // A parent invitation links the new account to the student it was
+      // sent for. Non-blocking, same pattern as the program-enroll cascade
+      // above — the parent account is still created either way.
+      if (invitation.role === "parent" && invitation.student_id) {
+        supabaseAdmin
+          .from("parent_student_links")
+          .upsert(
+            { parent_id: userId, student_id: invitation.student_id },
+            { onConflict: "parent_id,student_id" }
+          )
+          .then(({ error: linkError }) => {
+            if (linkError) console.warn("[invitations] parent link error:", linkError);
           });
       }
 

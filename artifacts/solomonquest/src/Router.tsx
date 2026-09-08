@@ -33,6 +33,8 @@ const TeacherReminders = lazy(() => import("@/pages/teacher/TeacherReminders"));
 const CalendarPage = lazy(() => import("@/pages/calendar/CalendarPage"));
 const TeacherResources = lazy(() => import("@/pages/teacher/TeacherResources"));
 
+const ParentOverview = lazy(() => import("@/pages/parent/ParentOverview"));
+
 const StudentOverview = lazy(() => import("@/pages/student/StudentOverview"));
 const StudentCourseDetail = lazy(() => import("@/pages/student/StudentCourseDetail"));
 const StudentAssignments = lazy(() => import("@/pages/student/StudentAssignments"));
@@ -188,6 +190,11 @@ export function Router() {
         {/* Teacher Quiz Route */}
         <Route path="/dashboard/teacher/quizzes">
           <ProtectedRoute allowedRoles={["teacher"]}><TeacherQuizBuilder /></ProtectedRoute>
+        </Route>
+
+        {/* Parent/Guardian Routes */}
+        <Route path="/dashboard/parent">
+          <ProtectedRoute allowedRoles={["parent"]}><ParentOverview /></ProtectedRoute>
         </Route>
 
         {/* Chat & Forum Routes */}

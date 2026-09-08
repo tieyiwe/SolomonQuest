@@ -39,6 +39,8 @@ export default function Login() {
       setLocation("/dashboard/teacher");
     } else if (user.role === "student" || user.role === "staff") {
       setLocation("/dashboard/student");
+    } else if (user.role === "parent") {
+      setLocation("/dashboard/parent");
     } else {
       setLocation("/onboarding/setup");
     }
@@ -61,6 +63,8 @@ export default function Login() {
       setLocation("/dashboard/teacher");
     } else if (role === "student" || role === "staff") {
       setLocation("/dashboard/student");
+    } else if (role === "parent") {
+      setLocation("/dashboard/parent");
     } else {
       setLocation("/onboarding/setup");
     }

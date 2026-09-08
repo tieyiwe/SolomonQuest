@@ -33,6 +33,7 @@ import notesRouter from "./notes";
 import tuitionRouter from "./tuition";
 import impersonationRouter from "./impersonation";
 import calendarRouter from "./calendar";
+import parentsRouter from "./parents";
 
 const router: IRouter = Router();
 
@@ -70,5 +71,6 @@ router.use(notesRouter);
 router.use(tuitionRouter);
 router.use(impersonationRouter);
 router.use(calendarRouter);
+router.use(parentsRouter);
 
 export default router;
