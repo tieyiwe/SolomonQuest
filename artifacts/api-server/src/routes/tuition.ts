@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
+import { getStripe, isStripeConfigured } from "../lib/stripe";
 
 const router: IRouter = Router();
 
@@ -330,6 +331,103 @@ router.post(
       .order("installment_number", { ascending: true });
 
     res.json(mapPayment(updatedPayment, refreshedInstallments ?? []));
+  }
+);
+
+// ─── POST /tuition-payments/:id/checkout-session — real Stripe checkout ────
+// Creates a Stripe Checkout Session for the next unpaid installment (or the
+// full amount, for a one-shot payment) and returns its URL for the client
+// to redirect to. The actual "mark as paid" happens in the webhook handler
+// once Stripe confirms the payment — this route only starts the session.
+// Returns 503 with a clear message if Stripe isn't connected yet, so the
+// frontend can fall back to (or just disable) real checkout until it is,
+// without the rest of tuition ever breaking.
+router.post(
+  "/tuition-payments/:id/checkout-session",
+  requireAuth,
+  async (req: AuthenticatedRequest, res): Promise<void> => {
+    if (!isStripeConfigured()) {
+      res.status(503).json({ error: "Online payment isn't connected yet. Contact your school administrator." });
+      return;
+    }
+
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+
+    const { data: payment, error: paymentError } = await supabaseAdmin
+      .from("tuition_payments")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (paymentError || !payment) {
+      res.status(404).json({ error: "Payment not found" });
+      return;
+    }
+
+    // Only the student who owns this payment can start a checkout for it —
+    // unlike simulate-pay, school staff never need to pay on a student's
+    // behalf through Stripe.
+    if (payment.student_id !== req.userId) {
+      res.status(403).json({ error: "Not authorized to pay this" });
+      return;
+    }
+
+    const { data: installments, error: instError } = await supabaseAdmin
+      .from("tuition_installments")
+      .select("*")
+      .eq("payment_id", id)
+      .order("installment_number", { ascending: true });
+
+    if (instError) {
+      res.status(500).json({ error: instError.message });
+      return;
+    }
+
+    const nextUnpaid = (installments ?? []).find((i) => i.status !== "paid");
+    if (!nextUnpaid) {
+      res.status(400).json({ error: "Already fully paid" });
+      return;
+    }
+
+    const appUrl = process.env.APP_URL ?? "";
+
+    try {
+      const stripe = getStripe();
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [
+          {
+            price_data: {
+              currency: (payment.currency as string) ?? "usd",
+              product_data: {
+                name:
+                  payment.payment_method === "installments"
+                    ? `Tuition installment ${nextUnpaid.installment_number} of ${payment.installment_count}`
+                    : "Tuition payment",
+              },
+              unit_amount: nextUnpaid.amount_cents as number,
+            },
+            quantity: 1,
+          },
+        ],
+        client_reference_id: nextUnpaid.id as string,
+        metadata: {
+          tuition_payment_id: payment.id as string,
+          tuition_installment_id: nextUnpaid.id as string,
+        },
+        success_url: `${appUrl}/dashboard/student/tuition?checkout=success`,
+        cancel_url: `${appUrl}/dashboard/student/tuition?checkout=cancelled`,
+      });
+
+      await supabaseAdmin
+        .from("tuition_installments")
+        .update({ stripe_checkout_session_id: session.id })
+        .eq("id", nextUnpaid.id);
+
+      res.json({ url: session.url });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to start checkout" });
+    }
   }
 );
 

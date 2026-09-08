@@ -160,6 +160,22 @@ function TuitionSummary({ courseIds, accessToken }: { courseIds: string[]; acces
         paymentId = data.id;
       }
 
+      // Try real Stripe checkout first — once STRIPE_SECRET_KEY is set on
+      // the server this just starts working with no frontend change; until
+      // then it 503s and we fall back to the test-mode simulate-pay path.
+      const checkoutRes = await fetch(`/api/tuition-payments/${paymentId}/checkout-session`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (checkoutRes.ok) {
+        const { url } = await checkoutRes.json();
+        if (url) {
+          window.location.href = url;
+          return;
+        }
+      }
+
       const payRes = await fetch(`/api/tuition-payments/${paymentId}/simulate-pay`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },

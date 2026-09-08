@@ -4,6 +4,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import stripeWebhookRouter from "./routes/stripe-webhook";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
@@ -49,6 +50,11 @@ app.use(
     },
   }),
 );
+
+// Mounted before express.json(): Stripe webhook signature verification
+// needs the raw request body, not the parsed-and-restringified JSON every
+// other route gets below.
+app.use("/api", stripeWebhookRouter);
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
