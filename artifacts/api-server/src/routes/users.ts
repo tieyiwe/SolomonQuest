@@ -623,6 +623,7 @@ function mapProfile(p: Record<string, unknown>, email?: string | null) {
     internalEmail: p.internal_email ?? null,
     uniqueStudentId: p.unique_student_id ?? null,
     testModeEnabled: p.test_mode_enabled ?? false,
+    testModeAdminAccess: p.test_mode_admin_access ?? false,
   };
 }
 
@@ -630,6 +631,11 @@ function mapProfile(p: Record<string, unknown>, email?: string | null) {
 // Grants (or revokes) a user the ability to self-switch into other
 // teacher/staff/student accounts via POST /admin/impersonate for testing,
 // without needing an admin to trigger "View As" for them each time.
+// Optionally also grants `adminAccess` — for specific, known testers an
+// admin trusts to exercise the admin experience too (Test Mode is normally
+// capped at same-or-lower role than the account's own, see impersonation.ts;
+// this is an explicit, per-account exception to that cap, never automatic).
+// super_admin is never a valid Test Mode target regardless of this flag.
 router.patch("/users/:id/test-mode", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
   if (req.userRole !== "admin" && req.userRole !== "super_admin") {
     res.status(403).json({ error: "Forbidden" });
@@ -637,7 +643,7 @@ router.patch("/users/:id/test-mode", requireAuth, async (req: AuthenticatedReque
   }
 
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const { enabled } = req.body as { enabled?: boolean };
+  const { enabled, adminAccess } = req.body as { enabled?: boolean; adminAccess?: boolean };
 
   if (typeof enabled !== "boolean") {
     res.status(400).json({ error: "enabled (boolean) is required" });
@@ -659,18 +665,23 @@ router.patch("/users/:id/test-mode", requireAuth, async (req: AuthenticatedReque
     return;
   }
 
+  const updates: Record<string, unknown> = { test_mode_enabled: enabled };
+  if (typeof adminAccess === "boolean") {
+    updates.test_mode_admin_access = enabled ? adminAccess : false;
+  }
+
   const { data, error } = await supabaseAdmin
     .from("profiles")
-    .update({ test_mode_enabled: enabled })
+    .update(updates)
     .eq("id", id)
-    .select("id, test_mode_enabled")
+    .select("id, test_mode_enabled, test_mode_admin_access")
     .single();
 
   if (error || !data) {
-    const missingColumn = error?.message?.toLowerCase().includes("test_mode_enabled");
+    const missingColumn = error?.message?.toLowerCase().includes("test_mode");
     res.status(500).json({
       error: missingColumn
-        ? "Test Mode isn't set up on this database yet — run the latest supabase-schema-additions.sql."
+        ? "Test Mode isn't set up on this database yet — run the latest supabase-schema-additions.sql and test-mode-admin-access.sql."
         : error?.message ?? "Failed to update test mode",
     });
     return;
@@ -686,7 +697,7 @@ router.patch("/users/:id/test-mode", requireAuth, async (req: AuthenticatedReque
     }).catch(() => {});
   }
 
-  res.json({ id: data.id, testModeEnabled: data.test_mode_enabled });
+  res.json({ id: data.id, testModeEnabled: data.test_mode_enabled, testModeAdminAccess: data.test_mode_admin_access });
 });
 
 // POST /users/:id/reset-password - admin sends password reset email to user

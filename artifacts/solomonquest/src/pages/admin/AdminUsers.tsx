@@ -140,18 +140,20 @@ function TestModeToggle({
   userId,
   userName,
   enabled,
+  adminAccess,
   onChanged,
 }: {
   userId: string;
   userName: string;
   enabled: boolean;
-  onChanged: (enabled: boolean) => void;
+  adminAccess: boolean;
+  onChanged: (enabled: boolean, adminAccess: boolean) => void;
 }) {
   const [loading, setLoading] = useState(false);
 
-  const handleToggle = async (next: boolean) => {
+  const patchTestMode = async (next: boolean, nextAdminAccess: boolean, successMessage: string) => {
     setLoading(true);
-    onChanged(next);
+    onChanged(next, nextAdminAccess);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(`/api/users/${userId}/test-mode`, {
@@ -160,29 +162,56 @@ function TestModeToggle({
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token}`,
         },
-        body: JSON.stringify({ enabled: next }),
+        body: JSON.stringify({ enabled: next, adminAccess: nextAdminAccess }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || "Failed to update Test Mode");
       }
-      toast.success(
-        next
-          ? `Test Mode enabled for ${userName} — they've been notified`
-          : `Test Mode disabled for ${userName}`
-      );
+      toast.success(successMessage);
     } catch (err: any) {
-      onChanged(!next);
+      onChanged(enabled, adminAccess);
       toast.error(err.message || "Failed to update Test Mode");
     } finally {
       setLoading(false);
     }
   };
 
+  const handleToggle = (next: boolean) =>
+    patchTestMode(
+      next,
+      next ? adminAccess : false,
+      next ? `Test Mode enabled for ${userName} — they've been notified` : `Test Mode disabled for ${userName}`
+    );
+
+  const handleAdminAccessToggle = (next: boolean) =>
+    patchTestMode(
+      enabled,
+      next,
+      next ? `${userName} can now also view as admin in Test Mode` : `Admin access removed from ${userName}'s Test Mode`
+    );
+
   return (
-    <div className="flex items-center gap-1.5" title="Test Mode: lets this user self-switch between teacher/staff/student accounts for testing">
-      <Switch checked={enabled} onCheckedChange={handleToggle} disabled={loading} className="scale-75" />
-      <span className="text-xs text-muted-foreground">Test Mode</span>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5" title="Test Mode: lets this user self-switch between teacher/staff/student accounts for testing">
+        <Switch checked={enabled} onCheckedChange={handleToggle} disabled={loading} className="scale-75" />
+        <span className="text-xs text-muted-foreground">Test Mode</span>
+      </div>
+      {enabled && (
+        <label
+          className="flex items-center gap-1.5 pl-0.5 cursor-pointer"
+          title="Also let this known tester view as admin in Test Mode — normally Test Mode is capped at their own role or below"
+        >
+          <input
+            type="checkbox"
+            checked={adminAccess}
+            onChange={(e) => handleAdminAccessToggle(e.target.checked)}
+            disabled={loading}
+            className="h-3 w-3"
+          />
+          <span className="text-[11px] text-muted-foreground">Admin access</span>
+        </label>
+      )}
     </div>
   );
 }
@@ -317,7 +346,9 @@ function UserTable({
   const updateUserRole = useUpdateUserRole();
   const [viewStudentId, setViewStudentId] = useState<string | null>(null);
   const [viewTeacherId, setViewTeacherId] = useState<string | null>(null);
-  const [testModeOverrides, setTestModeOverrides] = useState<Record<string, boolean>>({});
+  const [testModeOverrides, setTestModeOverrides] = useState<
+    Record<string, { enabled: boolean; adminAccess: boolean }>
+  >({});
 
   const filtered = (users ?? []).filter((u) => {
     const name = `${u.firstName ?? ""} ${u.lastName ?? ""} ${u.email ?? ""}`.toLowerCase();
@@ -435,8 +466,11 @@ function UserTable({
               <TestModeToggle
                 userId={user.id}
                 userName={`${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || user.email || "User"}
-                enabled={testModeOverrides[user.id] ?? (user as any).testModeEnabled ?? false}
-                onChanged={(enabled) => setTestModeOverrides((prev) => ({ ...prev, [user.id]: enabled }))}
+                enabled={testModeOverrides[user.id]?.enabled ?? (user as any).testModeEnabled ?? false}
+                adminAccess={testModeOverrides[user.id]?.adminAccess ?? (user as any).testModeAdminAccess ?? false}
+                onChanged={(enabled, adminAccess) =>
+                  setTestModeOverrides((prev) => ({ ...prev, [user.id]: { enabled, adminAccess } }))
+                }
               />
             </TableCell>
             <TableCell>

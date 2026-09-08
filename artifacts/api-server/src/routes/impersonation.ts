@@ -6,11 +6,12 @@ import { logger } from "../lib/logger";
 const router: IRouter = Router();
 
 // Admins can preview the app as a teacher/student/staff account to check
-// what they'd see after a change. "admin" is also allowed as a target, but
-// only for a super_admin caller (see the extra check below) — a regular
-// admin can never view as another admin, and self-triggered test_mode
-// switches (any non-admin) can never target an admin account either, since
-// that would be a privilege escalation rather than a same-or-lower preview.
+// what they'd see after a change. "admin" is also allowed as a target for
+// a super_admin caller, or for a non-admin test_mode account an admin has
+// specifically flagged with test_mode_admin_access (known testers helping
+// exercise every role) — see the checks below. A regular (non-super) admin
+// can never view as another admin. super_admin itself is never a valid
+// target, for anyone, ever.
 const IMPERSONATABLE_ROLES = new Set(["teacher", "staff", "student", "admin"]);
 
 // Self-service test_mode switching is meant for previewing same-or-lower
@@ -40,17 +41,19 @@ router.post(
   requireAuth,
   async (req: AuthenticatedRequest, res): Promise<void> => {
     const isAdmin = req.userRole === "admin" || req.userRole === "super_admin";
+    let callerHasAdminTestAccess = false;
 
     if (!isAdmin) {
       const { data: caller } = await supabaseAdmin
         .from("profiles")
-        .select("test_mode_enabled")
+        .select("test_mode_enabled, test_mode_admin_access")
         .eq("id", req.userId ?? "")
         .single();
       if (!caller?.test_mode_enabled) {
         res.status(403).json({ error: "Forbidden" });
         return;
       }
+      callerHasAdminTestAccess = caller.test_mode_admin_access === true;
     }
 
     const callerRank = ROLE_RANK[req.userRole ?? ""] ?? -1;
@@ -73,12 +76,16 @@ router.post(
       return;
     }
 
-    if (target.role === "admin" && req.userRole !== "super_admin") {
-      res.status(403).json({ error: "Only a super admin can view as an admin" });
+    if (target.role === "admin" && !(req.userRole === "super_admin" || callerHasAdminTestAccess)) {
+      res.status(403).json({ error: "Only a super admin — or a tester with admin test access — can view as an admin" });
       return;
     }
 
-    if (!isAdmin && (ROLE_RANK[target.role as string] ?? 99) > callerRank) {
+    if (
+      !isAdmin &&
+      !(target.role === "admin" && callerHasAdminTestAccess) &&
+      (ROLE_RANK[target.role as string] ?? 99) > callerRank
+    ) {
       res.status(403).json({ error: "Test Mode can only preview accounts at or below your own role" });
       return;
     }
