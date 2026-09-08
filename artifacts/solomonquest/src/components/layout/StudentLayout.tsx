@@ -24,6 +24,7 @@ import {
   X,
   Scroll,
   ClipboardList,
+  CalendarDays,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { BottomNav } from "@/components/layout/BottomNav";
@@ -56,6 +57,7 @@ export function StudentLayout({ children }: StudentLayoutProps) {
 
   const navLinks = [
     { href: "/dashboard/student", label: "Overview", icon: LayoutDashboard, exact: true },
+    { href: "/calendar", label: "Calendar", icon: CalendarDays, exact: false },
     { href: "/dashboard/student/assignments", label: "Assignments", icon: FileText, exact: false },
     { href: "/dashboard/student/quizzes", label: "Quizzes", icon: ClipboardList, exact: false },
     { href: "/dashboard/student/resources", label: "Resources", icon: FolderOpen, exact: false },

@@ -27,6 +27,7 @@ import {
   X,
   BarChart2,
   CalendarCheck,
+  CalendarDays,
   AlarmClock,
   MessageSquare,
 } from "lucide-react";
@@ -55,6 +56,7 @@ export function TeacherLayout({ children }: TeacherLayoutProps) {
 
   const navLinks = [
     { href: "/dashboard/teacher", label: "Overview", icon: LayoutDashboard, exact: true },
+    { href: "/calendar", label: "Calendar", icon: CalendarDays, exact: false },
     { href: "/dashboard/teacher/assignments", label: "Assignments", icon: FileText, exact: false },
     { href: "/dashboard/teacher/gradebook", label: "Gradebook", icon: ClipboardList, exact: false },
     { href: "/dashboard/teacher/attendance", label: "Attendance", icon: CalendarCheck, exact: false },

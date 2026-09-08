@@ -22,6 +22,7 @@ import {
   Paintbrush,
   ChevronDown,
   Layers,
+  CalendarDays,
 } from "lucide-react";
 import { TourOverlay, useTour } from "@/components/tour/TourOverlay";
 import { HelpCenter } from "@/components/help/HelpCenter";
@@ -33,6 +34,7 @@ import { StickyNotesLayer } from "@/components/notes/StickyNotesLayer";
 
 const adminLinks = [
   { href: "/dashboard/admin", label: "Overview", icon: LayoutDashboard },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/dashboard/admin/users", label: "Users", icon: Users },
   { href: "/dashboard/admin/courses", label: "Courses", icon: BookOpen },
   { href: "/dashboard/admin/programs", label: "Programs", icon: Layers },

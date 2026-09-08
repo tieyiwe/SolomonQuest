@@ -30,6 +30,7 @@ const TeacherQuizBuilder = lazy(() => import("@/pages/teacher/TeacherQuizBuilder
 const TeacherAnalytics = lazy(() => import("@/pages/teacher/TeacherAnalytics"));
 const TeacherAttendance = lazy(() => import("@/pages/teacher/TeacherAttendance"));
 const TeacherReminders = lazy(() => import("@/pages/teacher/TeacherReminders"));
+const CalendarPage = lazy(() => import("@/pages/calendar/CalendarPage"));
 const TeacherResources = lazy(() => import("@/pages/teacher/TeacherResources"));
 
 const StudentOverview = lazy(() => import("@/pages/student/StudentOverview"));
@@ -213,6 +214,11 @@ export function Router() {
         {/* Messages Route */}
         <Route path="/messages">
           <ProtectedRoute><MessagesPage /></ProtectedRoute>
+        </Route>
+
+        {/* Calendar Route — assignment due dates, live sessions, reminders in one feed */}
+        <Route path="/calendar">
+          <ProtectedRoute><CalendarPage /></ProtectedRoute>
         </Route>
 
         {/* Super Admin Routes */}

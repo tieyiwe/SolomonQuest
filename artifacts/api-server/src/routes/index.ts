@@ -32,6 +32,7 @@ import agentRouter from "./agent";
 import notesRouter from "./notes";
 import tuitionRouter from "./tuition";
 import impersonationRouter from "./impersonation";
+import calendarRouter from "./calendar";
 
 const router: IRouter = Router();
 
@@ -68,5 +69,6 @@ router.use(agentRouter);
 router.use(notesRouter);
 router.use(tuitionRouter);
 router.use(impersonationRouter);
+router.use(calendarRouter);
 
 export default router;
