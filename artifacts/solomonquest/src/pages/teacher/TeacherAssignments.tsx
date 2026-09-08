@@ -75,6 +75,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
+interface RubricCriterionForm {
+  id: string;
+  name: string;
+  maxPoints: string;
+}
+
 interface AssignmentFormData {
   title: string;
   description: string;
@@ -85,6 +91,7 @@ interface AssignmentFormData {
   assignment_type: "standard" | "video";
   video_url: string;
   require_full_watch: boolean;
+  rubric: RubricCriterionForm[];
 }
 
 const emptyForm: AssignmentFormData = {
@@ -97,9 +104,11 @@ const emptyForm: AssignmentFormData = {
   assignment_type: "standard",
   video_url: "",
   require_full_watch: true,
+  rubric: [],
 };
 
 function toFormData(a: Assignment & { instructions?: string | null; fileUrl?: string | null }): AssignmentFormData {
+  const rubric = (a as any).rubric as { id: string; name: string; maxPoints: number }[] | null;
   return {
     title: a.title ?? "",
     description: a.description ?? "",
@@ -110,6 +119,7 @@ function toFormData(a: Assignment & { instructions?: string | null; fileUrl?: st
     assignment_type: (a as any).assignmentType ?? "standard",
     video_url: (a as any).videoUrl ?? "",
     require_full_watch: (a as any).requireFullWatch ?? true,
+    rubric: (rubric ?? []).map((c) => ({ id: c.id, name: c.name, maxPoints: String(c.maxPoints) })),
   };
 }
 
@@ -289,6 +299,15 @@ function AssignmentFormDialog({
       return;
     }
 
+    const rubricRows = form.rubric.filter((c) => c.name.trim());
+    for (const c of rubricRows) {
+      const max = Number(c.maxPoints);
+      if (!c.name.trim() || !Number.isFinite(max) || max <= 0) {
+        toast.error(`Rubric criterion "${c.name || "(unnamed)"}" needs a name and a positive point value`);
+        return;
+      }
+    }
+
     const payload = {
       course_id: courseId,
       title: form.title.trim(),
@@ -300,6 +319,7 @@ function AssignmentFormDialog({
       assignment_type: form.assignment_type,
       video_url: isVideo ? form.video_url.trim() : undefined,
       require_full_watch: isVideo ? form.require_full_watch : undefined,
+      rubric: rubricRows.length > 0 ? rubricRows.map((c) => ({ id: c.id, name: c.name.trim(), maxPoints: Number(c.maxPoints) })) : undefined,
     };
 
     if (isEditing && editAssignment) {
@@ -480,6 +500,76 @@ function AssignmentFormDialog({
                 onChange={set("points")}
               />
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label>Rubric (optional)</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    rubric: [...f.rubric, { id: crypto.randomUUID(), name: "", maxPoints: "10" }],
+                  }))
+                }
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add Criterion
+              </Button>
+            </div>
+            {form.rubric.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No rubric — this assignment grades with a single point value.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {form.rubric.map((c, i) => (
+                  <div key={c.id} className="flex items-center gap-2">
+                    <Input
+                      placeholder="Criterion name (e.g. Thesis)"
+                      value={c.name}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          rubric: f.rubric.map((r, ri) => (ri === i ? { ...r, name: e.target.value } : r)),
+                        }))
+                      }
+                      className="flex-1"
+                    />
+                    <Input
+                      type="number"
+                      min={1}
+                      placeholder="Pts"
+                      value={c.maxPoints}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          rubric: f.rubric.map((r, ri) => (ri === i ? { ...r, maxPoints: e.target.value } : r)),
+                        }))
+                      }
+                      className="w-20"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => setForm((f) => ({ ...f, rubric: f.rubric.filter((_, ri) => ri !== i) }))}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground">
+                  Total: {form.rubric.reduce((sum, c) => sum + (Number(c.maxPoints) || 0), 0)} points across{" "}
+                  {form.rubric.length} criteria — grading will score each one and sum them.
+                </p>
+              </div>
+            )}
           </div>
 
           <DialogFooter>

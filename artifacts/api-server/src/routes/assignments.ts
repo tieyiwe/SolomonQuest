@@ -12,6 +12,36 @@ function isAdmin(role?: string): boolean {
   return role === "admin" || role === "super_admin";
 }
 
+export interface RubricCriterion {
+  id: string;
+  name: string;
+  maxPoints: number;
+}
+
+/** Validates a rubric shape from request input; returns null (valid, possibly empty) or an error string. */
+function validateRubric(input: unknown): { rubric: RubricCriterion[] | null; error: string | null } {
+  if (input === undefined || input === null) return { rubric: null, error: null };
+  if (!Array.isArray(input)) return { rubric: null, error: "rubric must be an array of criteria" };
+  if (input.length === 0) return { rubric: null, error: null };
+
+  const seenIds = new Set<string>();
+  const rubric: RubricCriterion[] = [];
+  for (const raw of input) {
+    const c = raw as Record<string, unknown>;
+    const id = typeof c.id === "string" && c.id ? c.id : null;
+    const name = typeof c.name === "string" ? c.name.trim() : "";
+    const maxPoints = typeof c.maxPoints === "number" ? c.maxPoints : Number(c.maxPoints);
+    if (!id || seenIds.has(id)) return { rubric: null, error: "Each rubric criterion needs a unique id" };
+    if (!name) return { rubric: null, error: "Each rubric criterion needs a name" };
+    if (!Number.isFinite(maxPoints) || maxPoints <= 0) {
+      return { rubric: null, error: `Criterion "${name}" needs a positive maxPoints value` };
+    }
+    seenIds.add(id);
+    rubric.push({ id, name, maxPoints });
+  }
+  return { rubric, error: null };
+}
+
 /**
  * Confirms the caller may manage this assignment's course: a teacher must
  * own the course, an admin must be in the same school as it, super_admin
@@ -189,7 +219,7 @@ router.post("/assignments", requireAuth, async (req: AuthenticatedRequest, res):
     return;
   }
 
-  const { course_id, title, description, due_date, points, file_url, instructions, assignment_type, video_url, require_full_watch, isPublished } = req.body;
+  const { course_id, title, description, due_date, points, file_url, instructions, assignment_type, video_url, require_full_watch, isPublished, rubric: rubricInput } = req.body;
 
   if (!course_id) {
     res.status(400).json({ error: "course_id is required" });
@@ -201,6 +231,12 @@ router.post("/assignments", requireAuth, async (req: AuthenticatedRequest, res):
   }
   if (due_date && isNaN(Date.parse(due_date))) {
     res.status(400).json({ error: "due_date must be a valid date" });
+    return;
+  }
+
+  const { rubric, error: rubricError } = validateRubric(rubricInput);
+  if (rubricError) {
+    res.status(400).json({ error: rubricError });
     return;
   }
 
@@ -232,6 +268,7 @@ router.post("/assignments", requireAuth, async (req: AuthenticatedRequest, res):
       assignment_type: assignment_type ?? "standard",
       video_url: video_url ?? null,
       require_full_watch: require_full_watch ?? false,
+      rubric,
     })
     .select()
     .single();
@@ -272,10 +309,16 @@ router.put("/assignments/:id", requireAuth, async (req: AuthenticatedRequest, re
     return;
   }
 
-  const { title, description, due_date, points, file_url, instructions, assignment_type, video_url, require_full_watch, isPublished } = req.body;
+  const { title, description, due_date, points, file_url, instructions, assignment_type, video_url, require_full_watch, isPublished, rubric: rubricInput } = req.body;
 
   if (due_date !== undefined && due_date !== null && isNaN(Date.parse(due_date))) {
     res.status(400).json({ error: "due_date must be a valid date" });
+    return;
+  }
+
+  const { rubric, error: rubricError } = validateRubric(rubricInput);
+  if (rubricError) {
+    res.status(400).json({ error: rubricError });
     return;
   }
 
@@ -290,6 +333,7 @@ router.put("/assignments/:id", requireAuth, async (req: AuthenticatedRequest, re
   if (video_url !== undefined) updates.video_url = video_url;
   if (require_full_watch !== undefined) updates.require_full_watch = require_full_watch;
   if (isPublished !== undefined) updates.is_published = isPublished;
+  if (rubricInput !== undefined) updates.rubric = rubric;
 
   const wasPublished = existing.is_published === true;
 
@@ -592,6 +636,7 @@ function enrichAssignmentFields(a: Record<string, unknown>, courseTitle: string 
     assignmentType: (a.assignment_type as string) ?? "standard",
     videoUrl: (a.video_url as string | null) ?? null,
     requireFullWatch: (a.require_full_watch as boolean) ?? false,
+    rubric: (a.rubric as RubricCriterion[] | null) ?? null,
   };
 }
 

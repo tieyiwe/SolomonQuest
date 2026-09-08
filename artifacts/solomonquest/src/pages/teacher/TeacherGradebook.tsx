@@ -57,6 +57,12 @@ import { cn } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+interface RubricCriterion {
+  id: string;
+  name: string;
+  maxPoints: number;
+}
+
 interface CellSelection {
   studentId: string;
   studentName: string;
@@ -68,6 +74,8 @@ interface CellSelection {
   currentFeedback: string | null;
   content: string | null;
   fileUrl: string | null;
+  rubric: RubricCriterion[] | null;
+  currentRubricScores: Record<string, { score: number }> | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -143,8 +151,10 @@ function GradingPanel({
 }) {
   const [grade, setGrade] = useState<string>("");
   const [feedback, setFeedback] = useState<string>("");
+  const [rubricInputs, setRubricInputs] = useState<Record<string, string>>({});
   const [converting, setConverting] = useState(false);
   const gradeSubmission = useGradeSubmission();
+  const hasRubric = !!selection?.rubric && selection.rubric.length > 0;
 
   const convertPdfToDocx = async () => {
     if (!selection?.fileUrl) return;
@@ -182,17 +192,52 @@ function GradingPanel({
     }
   };
 
-  // Reset grade/feedback whenever the selected submission changes
+  // Reset grade/feedback/rubric inputs whenever the selected submission changes
   useEffect(() => {
     setGrade(selection?.currentGrade != null ? String(selection.currentGrade) : "");
     setFeedback(selection?.currentFeedback || "");
+    const scores = selection?.currentRubricScores;
+    setRubricInputs(
+      scores
+        ? Object.fromEntries(Object.entries(scores).map(([id, v]) => [id, String(v.score)]))
+        : {}
+    );
   }, [selection?.submissionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rubricTotal = hasRubric
+    ? selection!.rubric!.reduce((sum, c) => sum + (Number(rubricInputs[c.id]) || 0), 0)
+    : null;
+  const rubricMax = hasRubric ? selection!.rubric!.reduce((sum, c) => sum + c.maxPoints, 0) : null;
 
   const handleSave = () => {
     if (!selection?.submissionId) {
       toast.error("No submission to grade");
       return;
     }
+
+    if (hasRubric) {
+      const rubricScores: Record<string, number> = {};
+      for (const c of selection!.rubric!) {
+        const score = Number(rubricInputs[c.id]);
+        if (!Number.isFinite(score) || score < 0 || score > c.maxPoints) {
+          toast.error(`Score for "${c.name}" must be between 0 and ${c.maxPoints}`);
+          return;
+        }
+        rubricScores[c.id] = score;
+      }
+      gradeSubmission.mutate(
+        { id: selection.submissionId, data: { rubricScores, feedback } as any },
+        {
+          onSuccess: () => {
+            toast.success("Grade saved");
+            onSaved();
+          },
+          onError: () => toast.error("Failed to save grade"),
+        }
+      );
+      return;
+    }
+
     const numGrade = parseFloat(grade);
     if (isNaN(numGrade)) {
       toast.error("Enter a valid grade");
@@ -276,31 +321,63 @@ function GradingPanel({
             )}
           </div>
 
-          {/* Grade input */}
-          <div className="space-y-2">
-            <Label htmlFor="grade-input" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Grade
-            </Label>
-            <div className="flex items-center gap-3">
-              <Input
-                id="grade-input"
-                type="number"
-                value={grade}
-                onChange={(e) => setGrade(e.target.value)}
-                placeholder="0"
-                className="w-24"
-                min={0}
-                max={selection?.pointsPossible ?? undefined}
-                disabled={!selection?.submissionId}
-              />
-              {selection?.pointsPossible != null && (
-                <span className="text-sm text-muted-foreground">/ {selection.pointsPossible}</span>
-              )}
-              {pct != null && (
-                <span className={cn("text-sm ml-auto", gradeColor(pct))}>{pct}%</span>
-              )}
+          {/* Grade input — rubric-based when this assignment has one, else a single value */}
+          {hasRubric ? (
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Rubric
+              </Label>
+              <div className="space-y-2">
+                {selection!.rubric!.map((c) => (
+                  <div key={c.id} className="flex items-center gap-3">
+                    <span className="text-sm flex-1 truncate">{c.name}</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={c.maxPoints}
+                      value={rubricInputs[c.id] ?? ""}
+                      onChange={(e) => setRubricInputs((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                      placeholder="0"
+                      className="w-20"
+                      disabled={!selection?.submissionId}
+                    />
+                    <span className="text-xs text-muted-foreground w-16 shrink-0">/ {c.maxPoints} pts</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total</span>
+                <span className={cn("text-sm", gradeColor(rubricMax ? Math.round((rubricTotal! / rubricMax) * 100) : null))}>
+                  {rubricTotal} / {rubricMax}
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="grade-input" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Grade
+              </Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="grade-input"
+                  type="number"
+                  value={grade}
+                  onChange={(e) => setGrade(e.target.value)}
+                  placeholder="0"
+                  className="w-24"
+                  min={0}
+                  max={selection?.pointsPossible ?? undefined}
+                  disabled={!selection?.submissionId}
+                />
+                {selection?.pointsPossible != null && (
+                  <span className="text-sm text-muted-foreground">/ {selection.pointsPossible}</span>
+                )}
+                {pct != null && (
+                  <span className={cn("text-sm ml-auto", gradeColor(pct))}>{pct}%</span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Feedback */}
           <div className="space-y-2">
@@ -321,7 +398,7 @@ function GradingPanel({
         <div className="border-t px-6 py-4 flex gap-3">
           <Button
             onClick={handleSave}
-            disabled={!selection?.submissionId || grade === "" || gradeSubmission.isPending}
+            disabled={!selection?.submissionId || (!hasRubric && grade === "") || gradeSubmission.isPending}
             className="flex-1"
           >
             {gradeSubmission.isPending ? "Saving..." : "Save Grade"}
@@ -366,7 +443,7 @@ function CourseGradebook({ courseId, courseTitle }: { courseId: string; courseTi
     (
       studentId: string,
       studentName: string,
-      assignment: { id: string; title: string; pointsPossible?: number | null }
+      assignment: { id: string; title: string; pointsPossible?: number | null; rubric?: RubricCriterion[] | null }
     ) => {
       const sub = submissionCache[studentId]?.[assignment.id];
       setSelectedCell({
@@ -380,6 +457,8 @@ function CourseGradebook({ courseId, courseTitle }: { courseId: string; courseTi
         currentFeedback: sub?.feedback ?? null,
         content: sub?.content ?? null,
         fileUrl: sub?.fileUrl ?? null,
+        rubric: assignment.rubric ?? null,
+        currentRubricScores: (sub as any)?.rubricScores ?? null,
       });
     },
     [submissionCache]
