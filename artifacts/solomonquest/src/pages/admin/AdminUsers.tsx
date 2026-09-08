@@ -65,6 +65,7 @@ import {
   Briefcase,
   Send,
   Eye,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -627,6 +628,183 @@ function InviteButton({
   );
 }
 
+interface BulkImportRowResult {
+  email: string;
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * CSV bulk roster import. Parsed entirely client-side (a spreadsheet export
+ * is trivially malformed in ways a strict server-side CSV parser would
+ * choke on — easier and safer to be lenient here and only send well-formed
+ * JSON rows to the API) and sent to POST /invitations/bulk, which creates
+ * one invitation per row through the exact same path as a single invite.
+ * Expected header row: email, role, program (program only used/required
+ * for student rows, matched by name against this school's programs).
+ */
+function BulkImportButton({ onImported }: { onImported: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState<{ email: string; role: string; programName?: string }[]>([]);
+  const [parseError, setParseError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [results, setResults] = useState<BulkImportRowResult[] | null>(null);
+  const { data: programs } = useListPrograms({ query: { enabled: open } });
+
+  const parseCsv = (text: string) => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      setParseError("The file is empty");
+      setRows([]);
+      return;
+    }
+    const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+    const emailIdx = header.indexOf("email");
+    const roleIdx = header.indexOf("role");
+    const programIdx = header.indexOf("program");
+    if (emailIdx === -1) {
+      setParseError('CSV must have an "email" column (role and program columns are optional).');
+      setRows([]);
+      return;
+    }
+
+    const parsed = lines.slice(1).map((line) => {
+      const cols = line.split(",").map((c) => c.trim());
+      return {
+        email: cols[emailIdx] ?? "",
+        role: (roleIdx !== -1 ? cols[roleIdx] : "") || "student",
+        programName: programIdx !== -1 ? cols[programIdx] : undefined,
+      };
+    }).filter((r) => r.email);
+
+    if (parsed.length === 0) {
+      setParseError("No rows with an email address were found.");
+      setRows([]);
+      return;
+    }
+    if (parsed.length > 500) {
+      setParseError(`This file has ${parsed.length} rows — split it into batches of 500 or fewer.`);
+      setRows([]);
+      return;
+    }
+    setParseError("");
+    setRows(parsed);
+  };
+
+  const handleFile = (file: File) => {
+    setFileName(file.name);
+    setResults(null);
+    const reader = new FileReader();
+    reader.onload = () => parseCsv(String(reader.result ?? ""));
+    reader.readAsText(file);
+  };
+
+  const handleImport = async () => {
+    setImporting(true);
+    try {
+      const programByName = new Map((programs ?? []).map((p) => [p.name.toLowerCase(), p.id]));
+      const payloadRows = rows.map((r) => ({
+        email: r.email,
+        role: r.role,
+        programId: r.programName ? programByName.get(r.programName.toLowerCase()) : undefined,
+      }));
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/invitations/bulk", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ rows: payloadRows }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Bulk import failed");
+
+      setResults(body.results ?? []);
+      onImported();
+      if (body.failed === 0) {
+        toast.success(`Invited all ${body.succeeded} ${body.succeeded === 1 ? "person" : "people"}`);
+      } else {
+        toast.warning(`Invited ${body.succeeded} of ${body.total} — ${body.failed} failed`);
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Bulk import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const reset = () => {
+    setFileName("");
+    setRows([]);
+    setParseError("");
+    setResults(null);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <Upload className="mr-2 h-4 w-4" />
+          Import CSV
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Bulk Import Roster</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-2">
+          <p className="text-xs text-muted-foreground">
+            CSV with columns <code className="bg-muted px-1 rounded">email</code>,{" "}
+            <code className="bg-muted px-1 rounded">role</code> (teacher/staff/student, defaults to student), and{" "}
+            <code className="bg-muted px-1 rounded">program</code> (program name, required for students). Everyone
+            gets an invite email, same as inviting one at a time.
+          </p>
+          <Input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+          />
+          {fileName && !parseError && rows.length > 0 && !results && (
+            <p className="text-sm text-muted-foreground">
+              {fileName}: {rows.length} row{rows.length === 1 ? "" : "s"} ready to import.
+            </p>
+          )}
+          {parseError && <p className="text-sm text-destructive">{parseError}</p>}
+
+          {results && (
+            <div className="max-h-56 overflow-y-auto space-y-1 border rounded-lg p-2">
+              {results.map((r) => (
+                <div key={r.email} className="flex items-center justify-between text-xs gap-2">
+                  <span className="truncate">{r.email}</span>
+                  {r.success ? (
+                    <Badge variant="outline" className="text-green-700 border-green-200 bg-green-50 shrink-0">Invited</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-destructive border-destructive/30 bg-destructive/5 shrink-0" title={r.error}>
+                      Failed
+                    </Badge>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Button
+            className="w-full"
+            onClick={handleImport}
+            disabled={importing || rows.length === 0 || !!parseError || !!results}
+          >
+            {importing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {results ? "Done" : `Import ${rows.length || ""} ${rows.length === 1 ? "Person" : "People"}`.trim()}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface Invitation {
   id: string;
   email: string;
@@ -827,7 +1005,10 @@ export default function AdminUsers() {
             <Card className="border-0 shadow-sm">
               <div className="flex items-center justify-between px-4 py-3 border-b">
                 <p className="text-sm text-muted-foreground">Teachers enrolled in your school.</p>
-                <InviteButton role="teacher" onSent={addInvite} />
+                <div className="flex items-center gap-2">
+                  <BulkImportButton onImported={addInvite} />
+                  <InviteButton role="teacher" onSent={addInvite} />
+                </div>
               </div>
               <CardContent className="p-0">
                 <UserTable role="teacher" search={search} />

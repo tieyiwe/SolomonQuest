@@ -8,6 +8,98 @@ import { notifyUsers } from "../lib/notifications";
 
 const router: IRouter = Router();
 
+interface CreateInviteParams {
+  email: string;
+  role: string;
+  programId?: string | null;
+  schoolId: string;
+  invitedBy: string;
+}
+
+type CreateInviteResult =
+  | { ok: true; invitation: Record<string, unknown> }
+  | { ok: false; email: string; error: string };
+
+/**
+ * Shared by the single-invite route and the CSV bulk-import route — same
+ * validation, same invitation row, same email. Kept as one function so the
+ * two entry points can't drift (e.g. bulk-import silently skipping the
+ * program-required-for-students check a one-off invite enforces).
+ */
+async function createInvitation(params: CreateInviteParams): Promise<CreateInviteResult> {
+  const { email, role, programId, schoolId, invitedBy } = params;
+
+  if (!email || !email.includes("@")) {
+    return { ok: false, email, error: "Missing or invalid email" };
+  }
+
+  const validRoles = ["teacher", "staff", "student"];
+  if (!validRoles.includes(role)) {
+    return { ok: false, email, error: `Invalid role "${role}"` };
+  }
+
+  if (programId && role !== "student") {
+    return { ok: false, email, error: "programId only applies to student invitations" };
+  }
+
+  if (role === "student" && !programId) {
+    return { ok: false, email, error: "A program is required to invite a student" };
+  }
+
+  if (programId) {
+    const { data: program } = await supabaseAdmin
+      .from("programs")
+      .select("id")
+      .eq("id", programId)
+      .eq("school_id", schoolId)
+      .maybeSingle();
+    if (!program) {
+      return { ok: false, email, error: "Program not found" };
+    }
+  }
+
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: invitation, error: insertError } = await supabaseAdmin
+    .from("invitations")
+    .insert({
+      email,
+      role,
+      school_id: schoolId,
+      invited_by: invitedBy,
+      status: "pending",
+      expires_at: expiresAt,
+      program_id: programId ?? null,
+    })
+    .select()
+    .single();
+
+  if (insertError || !invitation) {
+    return { ok: false, email, error: insertError?.message ?? "Failed to create invitation" };
+  }
+
+  const [schoolResult, profileResult] = await Promise.all([
+    supabaseAdmin.from("schools").select("name").eq("id", schoolId).single(),
+    supabaseAdmin.from("profiles").select("first_name, last_name").eq("id", invitedBy).single(),
+  ]);
+
+  const schoolName = schoolResult.data?.name ?? "SolomonQuest School";
+  const inviterName = profileResult.data
+    ? `${profileResult.data.first_name ?? ""} ${profileResult.data.last_name ?? ""}`.trim() || "An administrator"
+    : "An administrator";
+
+  const inviteUrl = `${process.env.APP_URL ?? ""}/invite/${invitation.token}`;
+
+  try {
+    await sendEnhancedInvite({ to: email, schoolName, inviterName, inviteUrl, role });
+  } catch (emailError) {
+    console.error("[invitations] email send error:", emailError);
+    // Do not fail — the invitation row is already created either way.
+  }
+
+  return { ok: true, invitation };
+}
+
 // ─── POST /invitations — admin creates invite ─────────────────────────────────
 
 router.post(
@@ -24,8 +116,48 @@ router.post(
 
       const { email, role = "teacher", programId } = req.body as { email?: string; role?: string; programId?: string };
 
-      if (!email) {
-        res.status(400).json({ error: "email is required" });
+      if (!schoolId) {
+        res.status(400).json({ error: "No school associated with this account" });
+        return;
+      }
+
+      const result = await createInvitation({
+        email: email ?? "",
+        role,
+        programId,
+        schoolId,
+        invitedBy: userId ?? "",
+      });
+
+      if (!result.ok) {
+        const status = result.error === "Program not found" ? 404 : 400;
+        res.status(status).json({ error: result.error });
+        return;
+      }
+
+      res.status(201).json({ invitation: result.invitation });
+    } catch (err: any) {
+      console.error("[invitations] Unhandled error in POST /invitations:", err);
+      res.status(500).json({ error: err?.message ?? "Internal server error" });
+    }
+  }
+);
+
+// ─── POST /invitations/bulk — admin bulk-imports a roster (CSV parsed client-side) ───
+// Accepts rows already parsed into JSON on the client (simpler and safer
+// than parsing arbitrary uploaded CSV server-side) and creates one
+// invitation per row via the same createInvitation() path as a single
+// invite, so behavior can't drift between the two. Capped at 500 rows per
+// request — this is a roster import, not a bulk-mail tool.
+router.post(
+  "/invitations/bulk",
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { userRole, schoolId, userId } = req;
+
+      if (userRole !== "admin" && userRole !== "super_admin") {
+        res.status(403).json({ error: "Forbidden: admin access required" });
         return;
       }
 
@@ -34,74 +166,48 @@ router.post(
         return;
       }
 
-      if (programId && role !== "student") {
-        res.status(400).json({ error: "programId only applies to student invitations" });
+      const { rows } = req.body as {
+        rows?: { email?: string; role?: string; programId?: string }[];
+      };
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(400).json({ error: "rows (a non-empty array) is required" });
+        return;
+      }
+      if (rows.length > 500) {
+        res.status(400).json({ error: "A single import is capped at 500 rows — split it into smaller batches" });
         return;
       }
 
-      if (role === "student" && !programId) {
-        res.status(400).json({ error: "A program is required to invite a student" });
-        return;
-      }
+      const results: { email: string; success: boolean; error?: string }[] = [];
 
-      if (programId) {
-        const { data: program } = await supabaseAdmin
-          .from("programs")
-          .select("id")
-          .eq("id", programId)
-          .eq("school_id", schoolId)
-          .maybeSingle();
-        if (!program) {
-          res.status(404).json({ error: "Program not found" });
-          return;
-        }
-      }
-
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-      const { data: invitation, error: insertError } = await supabaseAdmin
-        .from("invitations")
-        .insert({
+      // Sequential, not parallel — this can be dozens to hundreds of rows,
+      // each doing its own inserts and sending an email; a burst of
+      // concurrent sends is more likely to trip an email-provider rate
+      // limit than a plain create-user route ever would.
+      for (const row of rows) {
+        const email = (row.email ?? "").trim().toLowerCase();
+        const result = await createInvitation({
           email,
-          role,
-          school_id: schoolId,
-          invited_by: userId,
-          status: "pending",
-          expires_at: expiresAt,
-          program_id: programId ?? null,
-        })
-        .select()
-        .single();
-
-      if (insertError) {
-        console.error("[invitations] insert error:", insertError);
-        res.status(500).json({ error: insertError.message ?? "Failed to create invitation" });
-        return;
+          role: row.role ?? "student",
+          programId: row.programId,
+          schoolId,
+          invitedBy: userId ?? "",
+        });
+        results.push(
+          result.ok ? { email, success: true } : { email, success: false, error: result.error }
+        );
       }
 
-      // Fetch school name and inviter name for the email
-      const [schoolResult, profileResult] = await Promise.all([
-        supabaseAdmin.from("schools").select("name").eq("id", schoolId).single(),
-        supabaseAdmin.from("profiles").select("first_name, last_name").eq("id", userId).single(),
-      ]);
-
-      const schoolName = schoolResult.data?.name ?? "SolomonQuest School";
-      const inviterName = profileResult.data
-        ? `${profileResult.data.first_name ?? ""} ${profileResult.data.last_name ?? ""}`.trim() || "An administrator"
-        : "An administrator";
-
-      const inviteUrl = `${process.env.APP_URL ?? ""}/invite/${invitation.token}`;
-
-      try {
-        await sendEnhancedInvite({ to: email, schoolName, inviterName, inviteUrl, role });
-      } catch (emailError) {
-        console.error("[invitations] email send error:", emailError);
-        // Do not fail the request — invitation is already created
-      }
-
-      res.status(201).json({ invitation });
+      const succeeded = results.filter((r) => r.success).length;
+      res.status(207).json({
+        total: results.length,
+        succeeded,
+        failed: results.length - succeeded,
+        results,
+      });
     } catch (err: any) {
-      console.error("[invitations] Unhandled error in POST /invitations:", err);
+      console.error("[invitations] Unhandled error in POST /invitations/bulk:", err);
       res.status(500).json({ error: err?.message ?? "Internal server error" });
     }
   }
