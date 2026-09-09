@@ -506,7 +506,11 @@ function VideoTab({ courseId }: { courseId: string }) {
       return res.json();
     },
     enabled: !!courseId && !!session,
-    refetchInterval: 30000,
+    // A live class starting is a rare, teacher-initiated event, not
+    // something that needs near-real-time detection — this polls every
+    // open student course page, so the interval directly multiplies
+    // sustained query volume.
+    refetchInterval: 5 * 60 * 1000,
   });
 
   if (isLoading) {

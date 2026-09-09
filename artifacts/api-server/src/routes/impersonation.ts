@@ -62,7 +62,7 @@ router.post(
 
     const { data: target, error } = await supabaseAdmin
       .from("profiles")
-      .select("id, role, school_id, first_name, last_name")
+      .select("id, role, school_id, first_name, last_name, email")
       .eq("id", userId)
       .single();
 
@@ -95,15 +95,19 @@ router.post(
       return;
     }
 
-    const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
-    if (authError || !authUser?.user?.email) {
+    // email is denormalized onto profiles (kept in sync by a DB trigger —
+    // see supabase-perf-denormalize-email.sql), so this avoids a separate
+    // Auth Admin API call (billed/rate-limited independently of Postgres)
+    // just to look up an email we already have.
+    const targetEmail = target.email as string | null;
+    if (!targetEmail) {
       res.status(404).json({ error: "This user has no login email on file" });
       return;
     }
 
     const { data: link, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
       type: "magiclink",
-      email: authUser.user.email,
+      email: targetEmail,
     });
 
     if (linkError || !link) {
@@ -122,7 +126,7 @@ router.post(
       performed_by: req.userId,
       target_type: "user",
       target_id: userId,
-      target_name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || authUser.user.email,
+      target_name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || targetEmail,
       metadata: { targetRole: target.role },
     });
 
@@ -133,10 +137,10 @@ router.post(
 
     res.json({
       emailOtp: hashedToken,
-      email: authUser.user.email,
+      email: targetEmail,
       targetUser: {
         id: target.id,
-        name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || authUser.user.email,
+        name: `${target.first_name ?? ""} ${target.last_name ?? ""}`.trim() || targetEmail,
         role: target.role,
       },
     });

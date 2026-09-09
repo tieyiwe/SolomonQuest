@@ -130,11 +130,14 @@ interface ChatMessage {
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const EDIT_WINDOW_MS = 3 * 60 * 1000;
+// Kept in lockstep with the ping cadence below (ping every 5 min, so a
+// still-open tab is at most one missed ping away from this threshold).
+const ONLINE_THRESHOLD_MS = 10 * 60 * 1000;
 
 function formatLastSeen(onlineAt?: string | null): string {
   if (!onlineAt) return "Offline";
   const diffMs = Date.now() - new Date(onlineAt).getTime();
-  if (diffMs < 2 * 60 * 1000) return "Online";
+  if (diffMs < ONLINE_THRESHOLD_MS) return "Online";
   const mins = Math.floor(diffMs / 60000);
   if (mins < 60) return `Active ${mins}m ago`;
   const hours = Math.floor(mins / 60);
@@ -290,7 +293,7 @@ function formatTs(iso: string): string {
 
 function isOnline(onlineAt?: string | null): boolean {
   if (!onlineAt) return false;
-  return Date.now() - new Date(onlineAt).getTime() < 2 * 60 * 1000;
+  return Date.now() - new Date(onlineAt).getTime() < ONLINE_THRESHOLD_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -2148,13 +2151,13 @@ export default function ChatPage() {
         /* ignore */
       }
     };
-    // isOnline() treats anyone pinged within the last 2 minutes as online,
-    // so a 60s cadence still keeps active users continuously "online" (with
-    // margin for one missed ping) at half the DB writes of the previous 30s
-    // interval — this fires for every open chat tab, for as long as it's
-    // open, so the interval directly multiplies sustained write volume.
+    // This fires for every open chat tab for as long as it's open, so the
+    // interval directly multiplies sustained DB write volume — a 5-minute
+    // cadence against the 10-minute ONLINE_THRESHOLD_MS above still keeps
+    // active users continuously "online" (with a full ping's margin) at a
+    // fraction of the previous 60s interval's write rate.
     ping();
-    const iv = setInterval(ping, 60_000);
+    const iv = setInterval(ping, 5 * 60 * 1000);
     return () => clearInterval(iv);
   }, []);
 
