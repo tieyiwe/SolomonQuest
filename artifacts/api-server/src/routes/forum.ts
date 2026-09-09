@@ -36,8 +36,128 @@ async function createNotification(
   });
 }
 
+async function getMentions(topicId?: string, commentId?: string) {
+  let query = supabaseAdmin.from("forum_mentions").select("mentioned_user_id");
+  query = topicId ? query.eq("topic_id", topicId) : query.eq("comment_id", commentId as string);
+  const { data } = await query;
+  const userIds = (data ?? []).map((m) => m.mentioned_user_id as string);
+  if (userIds.length === 0) return [];
+
+  const { data: profiles } = await supabaseAdmin
+    .from("profiles")
+    .select("id, first_name, last_name")
+    .in("id", userIds);
+
+  return (profiles ?? []).map((p) => ({
+    id: p.id,
+    firstName: p.first_name,
+    lastName: p.last_name,
+  }));
+}
+
+/**
+ * Records @-mentions for a newly created topic/comment and notifies each
+ * mentioned user (skipping the author). userIds are trusted to already be
+ * validated (same-school) by the caller.
+ */
+async function recordMentions(
+  userIds: string[],
+  target: { topicId?: string; commentId?: string },
+  authorId: string | undefined,
+  notifTitle: string,
+  notifLink: string
+) {
+  const unique = Array.from(new Set(userIds)).filter((id) => id !== authorId);
+  if (unique.length === 0) return;
+
+  await supabaseAdmin.from("forum_mentions").insert(
+    unique.map((mentionedUserId) => ({
+      topic_id: target.topicId ?? null,
+      comment_id: target.commentId ?? null,
+      mentioned_user_id: mentionedUserId,
+    }))
+  );
+
+  await Promise.all(unique.map((uid) => createNotification(uid, notifTitle, notifLink)));
+}
+
+/**
+ * Validates that every id in mentionedUserIds actually belongs to this
+ * school, dropping any that don't rather than erroring — a stale/forged id
+ * in the mention list shouldn't block posting.
+ */
+async function filterValidMentionIds(
+  mentionedUserIds: unknown,
+  schoolId: string | null | undefined
+): Promise<string[]> {
+  if (!Array.isArray(mentionedUserIds) || mentionedUserIds.length === 0) return [];
+  const ids = mentionedUserIds.filter((id): id is string => typeof id === "string").slice(0, 20);
+  if (ids.length === 0) return [];
+
+  const { data } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .in("id", ids)
+    .eq("school_id", schoolId ?? "");
+
+  return (data ?? []).map((p) => p.id as string);
+}
+
+/**
+ * Whether the caller may see a topic scoped to this course/program.
+ * Unscoped topics (no course_id and no program_id) are open to the whole
+ * school. A course-scoped topic is visible to admins, the course's own
+ * teacher, and actively-enrolled students/staff. A program-scoped topic
+ * follows the same rule across every course in that program.
+ */
+async function canAccessForumScope(
+  req: AuthenticatedRequest,
+  courseId: string | null,
+  programId: string | null
+): Promise<boolean> {
+  if (req.userRole === "admin" || req.userRole === "super_admin") return true;
+  if (!courseId && !programId) return true;
+
+  if (courseId) {
+    const { data: course } = await supabaseAdmin
+      .from("courses")
+      .select("teacher_id")
+      .eq("id", courseId)
+      .maybeSingle();
+    if (!course) return false;
+    if (req.userRole === "teacher") return course.teacher_id === req.userId;
+    const { data: enrollment } = await supabaseAdmin
+      .from("course_enrollments")
+      .select("student_id")
+      .eq("course_id", courseId)
+      .eq("student_id", req.userId ?? "")
+      .eq("status", "active")
+      .maybeSingle();
+    return !!enrollment;
+  }
+
+  const { data: courses } = await supabaseAdmin
+    .from("courses")
+    .select("id, teacher_id")
+    .eq("program_id", programId as string);
+  const courseIds = (courses ?? []).map((c) => c.id as string);
+
+  if (req.userRole === "teacher") return (courses ?? []).some((c) => c.teacher_id === req.userId);
+  if (courseIds.length === 0) return false;
+
+  const { data: enrollment } = await supabaseAdmin
+    .from("course_enrollments")
+    .select("student_id")
+    .in("course_id", courseIds)
+    .eq("student_id", req.userId ?? "")
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+  return !!enrollment;
+}
+
 async function enrichTopic(topic: Record<string, unknown>) {
-  const [profile, commentCountRes, reactionCountRes] = await Promise.all([
+  const [profile, commentCountRes, reactionCountRes, mentions] = await Promise.all([
     topic.posted_by ? getProfile(topic.posted_by as string) : Promise.resolve(null),
     supabaseAdmin
       .from("forum_comments")
@@ -47,12 +167,14 @@ async function enrichTopic(topic: Record<string, unknown>) {
       .from("forum_reactions")
       .select("id", { count: "exact", head: true })
       .eq("topic_id", topic.id as string),
+    getMentions(topic.id as string, undefined),
   ]);
 
   return {
     id: topic.id,
     schoolId: topic.school_id,
     courseId: topic.course_id,
+    programId: topic.program_id ?? null,
     title: topic.title,
     content: topic.content,
     coverImage: topic.cover_image ?? null,
@@ -61,18 +183,20 @@ async function enrichTopic(topic: Record<string, unknown>) {
     postedByProfile: profile,
     commentCount: commentCountRes.count ?? 0,
     reactionCount: reactionCountRes.count ?? 0,
+    mentions,
     createdAt: topic.created_at,
     updatedAt: topic.updated_at,
   };
 }
 
 async function enrichComment(comment: Record<string, unknown>) {
-  const [profile, reactionCountRes] = await Promise.all([
+  const [profile, reactionCountRes, mentions] = await Promise.all([
     comment.posted_by ? getProfile(comment.posted_by as string) : Promise.resolve(null),
     supabaseAdmin
       .from("forum_reactions")
       .select("id", { count: "exact", head: true })
       .eq("comment_id", comment.id as string),
+    getMentions(undefined, comment.id as string),
   ]);
 
   return {
@@ -82,6 +206,7 @@ async function enrichComment(comment: Record<string, unknown>) {
     postedBy: comment.posted_by,
     postedByProfile: profile,
     reactionCount: reactionCountRes.count ?? 0,
+    mentions,
     createdAt: comment.created_at,
     updatedAt: comment.updated_at,
   };
@@ -104,6 +229,9 @@ router.get(
     if (req.query.courseId) {
       query = query.eq("course_id", req.query.courseId as string);
     }
+    if (req.query.programId) {
+      query = query.eq("program_id", req.query.programId as string);
+    }
 
     const { data, error } = await query;
 
@@ -112,7 +240,21 @@ router.get(
       return;
     }
 
-    const topics = await Promise.all((data ?? []).map(enrichTopic));
+    // A course/program-scoped topic is only visible to admins, the
+    // course's teacher, and its actively-enrolled students/staff — a
+    // student shouldn't see another class's forum just by knowing/guessing
+    // its courseId.
+    const visible: Record<string, unknown>[] = [];
+    for (const topic of data ?? []) {
+      const ok = await canAccessForumScope(
+        req,
+        (topic.course_id as string | null) ?? null,
+        (topic.program_id as string | null) ?? null
+      );
+      if (ok) visible.push(topic);
+    }
+
+    const topics = await Promise.all(visible.map(enrichTopic));
     res.json(topics);
   }
 );
@@ -134,7 +276,7 @@ router.post(
       return;
     }
 
-    const { courseId, isPinned } = req.body;
+    const { courseId, programId, isPinned, mentionedUserIds } = req.body;
 
     // Content sanitization: trim and enforce length limits
     const title: string = typeof req.body.title === "string" ? req.body.title.trim() : "";
@@ -160,6 +302,16 @@ router.post(
       return;
     }
 
+    // A teacher may only scope a topic to a course/program they actually
+    // teach in — admins can scope to anything in their own school.
+    if ((courseId || programId) && req.userRole === "teacher") {
+      const ok = await canAccessForumScope(req, courseId ?? null, programId ?? null);
+      if (!ok) {
+        res.status(403).json({ error: "You can only post to a class or program you teach" });
+        return;
+      }
+    }
+
     const coverImage = typeof req.body.coverImage === "string" ? req.body.coverImage.trim() : null;
 
     const { data, error } = await supabaseAdmin
@@ -169,6 +321,7 @@ router.post(
         title,
         content: content || null,
         course_id: courseId ?? null,
+        program_id: programId ?? null,
         is_pinned: isPinned ?? false,
         posted_by: req.userId,
         cover_image: coverImage || null,
@@ -180,6 +333,15 @@ router.post(
       res.status(400).json({ error: error.message });
       return;
     }
+
+    const validMentionIds = await filterValidMentionIds(mentionedUserIds, req.schoolId);
+    await recordMentions(
+      validMentionIds,
+      { topicId: data.id as string },
+      req.userId,
+      `You were mentioned in: ${title}`,
+      `/forum/topics/${data.id as string}`
+    );
 
     res.status(201).json(await enrichTopic(data));
   }
@@ -206,6 +368,16 @@ router.get(
     }
 
     if (req.userRole !== "super_admin" && topic.school_id !== req.schoolId) {
+      res.status(404).json({ error: "Topic not found" });
+      return;
+    }
+
+    const canAccess = await canAccessForumScope(
+      req,
+      (topic.course_id as string | null) ?? null,
+      (topic.program_id as string | null) ?? null
+    );
+    if (!canAccess) {
       res.status(404).json({ error: "Topic not found" });
       return;
     }
@@ -288,11 +460,21 @@ router.post(
     // Verify topic exists
     const { data: topic, error: topicError } = await supabaseAdmin
       .from("forum_topics")
-      .select("id, title, posted_by")
+      .select("id, title, posted_by, course_id, program_id")
       .eq("id", topicId)
       .single();
 
     if (topicError || !topic) {
+      res.status(404).json({ error: "Topic not found" });
+      return;
+    }
+
+    const canAccess = await canAccessForumScope(
+      req,
+      (topic.course_id as string | null) ?? null,
+      (topic.program_id as string | null) ?? null
+    );
+    if (!canAccess) {
       res.status(404).json({ error: "Topic not found" });
       return;
     }
@@ -337,6 +519,15 @@ router.post(
       Array.from(usersToNotify).map((uid) =>
         createNotification(uid, notifTitle, notifLink)
       )
+    );
+
+    const validMentionIds = await filterValidMentionIds(req.body.mentionedUserIds, req.schoolId);
+    await recordMentions(
+      validMentionIds,
+      { commentId: newComment.id as string },
+      req.userId,
+      `You were mentioned in a comment on: ${topic.title as string}`,
+      notifLink
     );
 
     res.status(201).json(await enrichComment(newComment));
@@ -545,6 +736,46 @@ router.delete(
     }
 
     res.sendStatus(204);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// GET /forum/mentionable-users?q= — @-mention autocomplete. Any teacher,
+// student, staff, or admin/super_admin in the caller's own school can be
+// tagged, matched by name against the search term.
+// ---------------------------------------------------------------------------
+router.get(
+  "/forum/mentionable-users",
+  requireAuth,
+  async (req: AuthenticatedRequest, res): Promise<void> => {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+
+    let query = supabaseAdmin
+      .from("profiles")
+      .select("id, first_name, last_name, role")
+      .eq("school_id", req.schoolId ?? "")
+      .neq("id", req.userId ?? "")
+      .limit(20);
+
+    if (q) {
+      query = query.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%`);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+
+    res.json(
+      (data ?? []).map((p) => ({
+        id: p.id,
+        firstName: p.first_name,
+        lastName: p.last_name,
+        role: p.role,
+      }))
+    );
   }
 );
 

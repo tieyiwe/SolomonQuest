@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
+import { MentionTextarea } from "@/components/forum/MentionTextarea";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 import {
@@ -56,6 +56,7 @@ interface ForumTopic {
   id: string;
   title: string;
   content: string;
+  coverImage?: string | null;
   author_id: string;
   author_name: string;
   author_avatar_url?: string | null;
@@ -65,6 +66,7 @@ interface ForumTopic {
   user_reactions?: UserReactions;
   course_id: string | null;
   course_name?: string | null;
+  program_id: string | null;
   is_pinned: boolean;
   school_id: string;
 }
@@ -79,6 +81,50 @@ interface ForumComment {
   created_at: string;
   reaction_counts: ReactionCounts;
   user_reactions?: UserReactions;
+}
+
+function defaultReactionCounts(): ReactionCounts {
+  return { like: 0, heart: 0, celebrate: 0 };
+}
+
+/** Translates the API's camelCase response into the shape this page renders. */
+function normalizeTopic(raw: any): ForumTopic {
+  const authorName =
+    [raw.postedByProfile?.first_name, raw.postedByProfile?.last_name].filter(Boolean).join(" ") ||
+    "Unknown";
+  return {
+    id: raw.id,
+    title: raw.title,
+    content: raw.content ?? "",
+    coverImage: raw.coverImage ?? null,
+    author_id: raw.postedBy,
+    author_name: authorName,
+    author_avatar_url: raw.postedByProfile?.avatar_url ?? null,
+    created_at: raw.createdAt,
+    updated_at: raw.updatedAt,
+    reaction_counts: { ...defaultReactionCounts(), like: raw.reactionCount ?? 0 },
+    course_id: raw.courseId ?? null,
+    course_name: null,
+    program_id: raw.programId ?? null,
+    is_pinned: !!raw.isPinned,
+    school_id: raw.schoolId,
+  };
+}
+
+function normalizeComment(raw: any): ForumComment {
+  const authorName =
+    [raw.postedByProfile?.first_name, raw.postedByProfile?.last_name].filter(Boolean).join(" ") ||
+    "Unknown";
+  return {
+    id: raw.id,
+    topic_id: raw.topicId,
+    content: raw.content ?? "",
+    author_id: raw.postedBy,
+    author_name: authorName,
+    author_avatar_url: raw.postedByProfile?.avatar_url ?? null,
+    created_at: raw.createdAt,
+    reaction_counts: { ...defaultReactionCounts(), like: raw.reactionCount ?? 0 },
+  };
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -301,6 +347,7 @@ export default function ForumTopicPage() {
   const [isLoadingTopic, setIsLoadingTopic] = useState(true);
   const [isLoadingComments, setIsLoadingComments] = useState(true);
   const [newComment, setNewComment] = useState("");
+  const [mentionedUserIds, setMentionedUserIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [topicReacting, setTopicReacting] = useState(false);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
@@ -308,37 +355,30 @@ export default function ForumTopicPage() {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const commentEndRef = useRef<HTMLDivElement>(null);
 
-  // ── Fetch topic ──
+  // ── Fetch topic (the single GET returns the topic's own comments too,
+  // there is no separate "list comments" endpoint) ──
   const fetchTopic = useCallback(async () => {
     if (!topicId) return;
     setIsLoadingTopic(true);
+    setIsLoadingComments(true);
     try {
       const res = await apiFetch(`/api/forum/topics/${topicId}`);
       if (!res.ok) throw new Error("Topic not found");
-      const data: ForumTopic = await res.json();
-      setTopic(data);
+      const raw = await res.json();
+      setTopic(normalizeTopic(raw));
+      setComments(((raw.comments ?? []) as any[]).map(normalizeComment));
     } catch (err: any) {
       toast.error(err?.message ?? "Could not load topic.");
     } finally {
       setIsLoadingTopic(false);
-    }
-  }, [topicId]);
-
-  // ── Fetch comments ──
-  const fetchComments = useCallback(async () => {
-    if (!topicId) return;
-    setIsLoadingComments(true);
-    try {
-      const res = await apiFetch(`/api/forum/topics/${topicId}/comments`);
-      if (!res.ok) throw new Error("Failed to load comments");
-      const data: ForumComment[] = await res.json();
-      setComments(data);
-    } catch (err: any) {
-      toast.error(err?.message ?? "Could not load comments.");
-    } finally {
       setIsLoadingComments(false);
     }
   }, [topicId]);
+
+  // Kept as an alias so the rest of the file (posting a comment, deleting
+  // one, etc.) can ask for a fresh comment list without duplicating the
+  // fetch — refetching the topic is the only way to get one.
+  const fetchComments = fetchTopic;
 
   // ── Realtime subscription ──
   useEffect(() => {
@@ -393,8 +433,7 @@ export default function ForumTopicPage() {
 
   useEffect(() => {
     fetchTopic();
-    fetchComments();
-  }, [fetchTopic, fetchComments]);
+  }, [fetchTopic]);
 
   // ── Topic reaction ──
   async function handleTopicReact(type: ReactionType) {
@@ -545,13 +584,14 @@ export default function ForumTopicPage() {
     try {
       const res = await apiFetch(`/api/forum/topics/${topicId}/comments`, {
         method: "POST",
-        body: JSON.stringify({ content: newComment.trim() }),
+        body: JSON.stringify({ content: newComment.trim(), mentionedUserIds }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error((err as any).message ?? "Failed to post comment");
       }
       setNewComment("");
+      setMentionedUserIds([]);
       fetchComments(); // fallback refresh; realtime handles live append
       toast.success("Comment posted.");
       setTimeout(() => commentEndRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
@@ -560,6 +600,7 @@ export default function ForumTopicPage() {
     } finally {
       setSubmitting(false);
     }
+    return;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -643,7 +684,12 @@ export default function ForumTopicPage() {
             {topic.course_id ? (
               <Badge className="bg-primary/10 text-primary border-0 gap-1 text-xs hover:bg-primary/10">
                 <BookOpen size={10} />
-                {topic.course_name ?? "Course"}
+                {topic.course_name ?? "Class"}
+              </Badge>
+            ) : topic.program_id ? (
+              <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 border-0 gap-1 text-xs hover:bg-indigo-100">
+                <BookOpen size={10} />
+                Program
               </Badge>
             ) : (
               <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0 gap-1 text-xs hover:bg-green-100">
@@ -771,10 +817,12 @@ export default function ForumTopicPage() {
             </div>
           </div>
           <form onSubmit={handleSubmitComment} className="p-4 space-y-3">
-            <Textarea
-              placeholder="Share your thoughts, ask a question, or add context…"
+            <MentionTextarea
+              placeholder="Share your thoughts, ask a question, or add context… Type @ to tag someone."
               value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
+              onChange={setNewComment}
+              mentionedUserIds={mentionedUserIds}
+              onMentionedUserIdsChange={setMentionedUserIds}
               disabled={submitting}
               className="min-h-[120px] resize-y text-sm border-border/60 focus:border-primary/50"
               onKeyDown={(e) => {
