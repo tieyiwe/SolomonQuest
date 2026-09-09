@@ -182,6 +182,7 @@ router.post("/courses", requireAuth, async (req: AuthenticatedRequest, res): Pro
       term_end_date: termEndDate ?? null,
       description: description ?? null,
       is_published: false,
+      created_by: req.userId,
     })
     .select()
     .single();
@@ -190,6 +191,20 @@ router.post("/courses", requireAuth, async (req: AuthenticatedRequest, res): Pro
     res.status(400).json({ error: error.message });
     return;
   }
+
+  // Fire-and-forget: who built this course, and whether a teacher was
+  // assigned right away. Never blocks the response on logging.
+  supabaseAdmin
+    .from("course_audit_log")
+    .insert({
+      course_id: data.id,
+      action: "created",
+      performed_by: req.userId,
+      new_teacher_id: teacherId ?? null,
+    })
+    .then(({ error: logError }) => {
+      if (logError) console.warn("[courses] audit log error:", logError);
+    });
 
   res.status(201).json(await enrichCourse(data));
 });
@@ -245,12 +260,36 @@ router.patch("/courses/:id", requireAuth, async (req: AuthenticatedRequest, res)
   if (description !== undefined) updates.description = description;
   if (isPublished !== undefined) updates.is_published = isPublished;
 
+  // Capture the pre-update teacher so a reassignment can be logged with
+  // both sides of the change — fetched before the write, not from
+  // assertCanManageCourse's result, since that only ran the auth check.
+  let previousTeacherId: string | null = null;
+  if (teacherId !== undefined) {
+    const { data: before } = await supabaseAdmin.from("courses").select("teacher_id").eq("id", id).single();
+    previousTeacherId = (before?.teacher_id as string | null) ?? null;
+  }
+
   const { data, error } = await supabaseAdmin
     .from("courses")
     .update(updates)
     .eq("id", id)
     .select()
     .single();
+
+  if (teacherId !== undefined && !error && data && previousTeacherId !== (teacherId ?? null)) {
+    supabaseAdmin
+      .from("course_audit_log")
+      .insert({
+        course_id: id,
+        action: teacherId ? "teacher_assigned" : "teacher_unassigned",
+        performed_by: req.userId,
+        previous_teacher_id: previousTeacherId,
+        new_teacher_id: teacherId ?? null,
+      })
+      .then(({ error: logError }) => {
+        if (logError) console.warn("[courses] audit log error:", logError);
+      });
+  }
 
   if (error || !data) {
     res.status(404).json({ error: "Course not found" });
@@ -463,6 +502,7 @@ router.put("/courses/:id/live-settings", requireAuth, async (req: AuthenticatedR
 async function enrichCourse(c: Record<string, unknown>) {
   let teacherName: string | null = null;
   let studentCount: number | null = null;
+  let createdByName: string | null = null;
 
   if (c.teacher_id) {
     const { data: teacher } = await supabaseAdmin
@@ -472,6 +512,17 @@ async function enrichCourse(c: Record<string, unknown>) {
       .single();
     if (teacher) {
       teacherName = [teacher.first_name, teacher.last_name].filter(Boolean).join(" ") || null;
+    }
+  }
+
+  if (c.created_by) {
+    const { data: creator } = await supabaseAdmin
+      .from("profiles")
+      .select("first_name, last_name")
+      .eq("id", c.created_by as string)
+      .single();
+    if (creator) {
+      createdByName = [creator.first_name, creator.last_name].filter(Boolean).join(" ") || null;
     }
   }
 
@@ -497,7 +548,62 @@ async function enrichCourse(c: Record<string, unknown>) {
     isPublished: c.is_published,
     teacherName,
     studentCount,
+    createdBy: c.created_by ?? null,
+    createdByName,
+    createdAt: c.created_at ?? null,
   };
 }
+
+// GET /courses/:id/audit-log — who created this course and every teacher
+// (re)assignment since, newest first. Staff/admin/teacher-of-record only.
+router.get("/courses/:id/audit-log", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+
+  const access = await assertCanManageCourse(id, req.userId, req.userRole);
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("course_audit_log")
+    .select("id, action, performed_by, previous_teacher_id, new_teacher_id, created_at")
+    .eq("course_id", id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  const actorIds = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.performed_by) actorIds.add(row.performed_by as string);
+    if (row.previous_teacher_id) actorIds.add(row.previous_teacher_id as string);
+    if (row.new_teacher_id) actorIds.add(row.new_teacher_id as string);
+  }
+
+  const { data: profiles } = actorIds.size
+    ? await supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", Array.from(actorIds))
+    : { data: [] as { id: string; first_name: string | null; last_name: string | null }[] };
+
+  const nameById = new Map(
+    (profiles ?? []).map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(" ") || null])
+  );
+
+  res.json(
+    (data ?? []).map((row) => ({
+      id: row.id,
+      action: row.action,
+      performedBy: row.performed_by,
+      performedByName: row.performed_by ? nameById.get(row.performed_by as string) ?? null : null,
+      previousTeacherId: row.previous_teacher_id,
+      previousTeacherName: row.previous_teacher_id ? nameById.get(row.previous_teacher_id as string) ?? null : null,
+      newTeacherId: row.new_teacher_id,
+      newTeacherName: row.new_teacher_id ? nameById.get(row.new_teacher_id as string) ?? null : null,
+      createdAt: row.created_at,
+    }))
+  );
+});
 
 export default router;

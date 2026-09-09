@@ -66,6 +66,7 @@ import {
   GraduationCap,
   UserPlus,
   Radio,
+  History,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -236,6 +237,103 @@ interface RosterStudent {
   firstName: string | null;
   lastName: string | null;
   avatarUrl: string | null;
+}
+
+interface CourseAuditLogEntry {
+  id: string;
+  action: "created" | "teacher_assigned" | "teacher_unassigned";
+  performedByName: string | null;
+  previousTeacherName: string | null;
+  newTeacherName: string | null;
+  createdAt: string;
+}
+
+function describeAuditEntry(entry: CourseAuditLogEntry): string {
+  const actor = entry.performedByName ?? "Someone";
+  if (entry.action === "created") {
+    return entry.newTeacherName
+      ? `${actor} created this course and assigned ${entry.newTeacherName} as teacher`
+      : `${actor} created this course`;
+  }
+  if (entry.action === "teacher_assigned") {
+    return entry.previousTeacherName
+      ? `${actor} reassigned the course from ${entry.previousTeacherName} to ${entry.newTeacherName}`
+      : `${actor} assigned ${entry.newTeacherName} as teacher`;
+  }
+  return `${actor} removed ${entry.previousTeacherName ?? "the teacher"} from this course`;
+}
+
+function CourseHistoryDialog({ course }: { course: Course }) {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<CourseAuditLogEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    apiFetch(`/api/courses/${course.id}/audit-log`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setEntries(data))
+      .catch(() => setEntries([]))
+      .finally(() => setLoading(false));
+  }, [open, course.id]);
+
+  const createdAt = (course as any).createdAt as string | null | undefined;
+  const createdByName = (course as any).createdByName as string | null | undefined;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Course history">
+          <History className="h-3.5 w-3.5" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{course.title} — History</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {createdAt && (
+            <p className="text-sm text-muted-foreground">
+              Built by <span className="font-medium text-foreground">{createdByName ?? "Unknown"}</span> on{" "}
+              {new Date(createdAt).toLocaleString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </p>
+          )}
+          <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
+            {loading ? (
+              <div className="p-4 space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+              </div>
+            ) : !entries || entries.length === 0 ? (
+              <p className="p-4 text-sm text-muted-foreground">No log entries yet.</p>
+            ) : (
+              entries.map((entry) => (
+                <div key={entry.id} className="p-3 text-sm">
+                  <p>{describeAuditEntry(entry)}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {new Date(entry.createdAt).toLocaleString(undefined, {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function CourseRosterTab({ courseId }: { courseId: string }) {
@@ -902,6 +1000,7 @@ export default function AdminCourses() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <CourseHistoryDialog course={course} />
                             <Button
                               variant="ghost"
                               size="sm"
