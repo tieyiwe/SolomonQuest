@@ -58,7 +58,7 @@ router.get("/courses/:courseId/attendance", requireAuth, async (req: Authenticat
     return;
   }
 
-  const records = await Promise.all((data ?? []).map(enrichAttendance));
+  const records = await enrichAttendanceRows(data ?? []);
   res.json(records);
 });
 
@@ -268,6 +268,31 @@ async function enrichAttendance(a: Record<string, unknown>) {
     status: a.status,
     studentName,
   };
+}
+
+async function enrichAttendanceRows(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return [];
+
+  const studentIds = Array.from(
+    new Set(rows.filter((a) => a.student_id).map((a) => a.student_id as string))
+  );
+
+  const { data: profiles } = studentIds.length
+    ? await supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", studentIds)
+    : { data: [] as { id: string; first_name: string | null; last_name: string | null }[] };
+
+  const nameById = new Map(
+    (profiles ?? []).map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(" ") || null])
+  );
+
+  return rows.map((a) => ({
+    id: a.id,
+    courseId: a.course_id,
+    studentId: a.student_id,
+    sessionDate: a.session_date,
+    status: a.status,
+    studentName: a.student_id ? nameById.get(a.student_id as string) ?? null : null,
+  }));
 }
 
 export default router;

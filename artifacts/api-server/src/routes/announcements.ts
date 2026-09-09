@@ -23,7 +23,7 @@ router.get("/announcements", requireAuth, async (req: AuthenticatedRequest, res)
     return;
   }
 
-  const announcements = await Promise.all((data ?? []).map(enrichAnnouncement));
+  const announcements = await enrichAnnouncements(data ?? []);
   res.json(announcements);
 });
 
@@ -125,6 +125,34 @@ async function enrichAnnouncement(a: Record<string, unknown>) {
     postedByName,
     createdAt: a.created_at,
   };
+}
+
+async function enrichAnnouncements(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return [];
+
+  const posterIds = Array.from(
+    new Set(rows.filter((a) => a.posted_by).map((a) => a.posted_by as string))
+  );
+
+  const { data: profiles } = posterIds.length
+    ? await supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", posterIds)
+    : { data: [] as { id: string; first_name: string | null; last_name: string | null }[] };
+
+  const nameById = new Map(
+    (profiles ?? []).map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(" ") || null])
+  );
+
+  return rows.map((a) => ({
+    id: a.id,
+    schoolId: a.school_id,
+    courseId: a.course_id,
+    title: a.title,
+    content: a.content,
+    isPinned: a.is_pinned,
+    postedBy: a.posted_by,
+    postedByName: a.posted_by ? nameById.get(a.posted_by as string) ?? null : null,
+    createdAt: a.created_at,
+  }));
 }
 
 export default router;

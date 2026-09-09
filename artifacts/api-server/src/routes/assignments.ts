@@ -121,7 +121,7 @@ router.get("/assignments/pending", requireAuth, async (req: AuthenticatedRequest
     (a: Record<string, unknown>) => !submittedIds.has(a.id as string)
   );
 
-  res.json(await Promise.all(pending.map(enrichAssignment)));
+  res.json(await enrichAssignments(pending));
 });
 
 // GET /assignments?course_id=X — list assignments for a course with submission info
@@ -430,7 +430,7 @@ router.get("/courses/:courseId/assignments", requireAuth, async (req: Authentica
     return;
   }
 
-  res.json(await Promise.all((data ?? []).map(enrichAssignment)));
+  res.json(await enrichAssignments(data ?? []));
 });
 
 // Create assignment (legacy route by path param — TeacherAssignments.tsx sends
@@ -653,6 +653,24 @@ async function enrichAssignment(a: Record<string, unknown>) {
   }
 
   return enrichAssignmentFields(a, courseTitle);
+}
+
+async function enrichAssignments(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return [];
+
+  const courseIds = Array.from(
+    new Set(rows.filter((a) => a.course_id).map((a) => a.course_id as string))
+  );
+
+  const { data: courses } = courseIds.length
+    ? await supabaseAdmin.from("courses").select("id, title").in("id", courseIds)
+    : { data: [] as { id: string; title: string | null }[] };
+
+  const titleById = new Map((courses ?? []).map((c) => [c.id, c.title]));
+
+  return rows.map((a) =>
+    enrichAssignmentFields(a, a.course_id ? titleById.get(a.course_id as string) ?? null : null)
+  );
 }
 
 export default router;

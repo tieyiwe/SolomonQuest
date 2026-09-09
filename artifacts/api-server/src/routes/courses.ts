@@ -72,7 +72,7 @@ router.get("/courses/public", async (req, res): Promise<void> => {
     return;
   }
 
-  const courses = await Promise.all((data ?? []).map(enrichCourse));
+  const courses = await enrichCourses(data ?? []);
   res.json(courses);
 });
 
@@ -92,7 +92,7 @@ router.get("/courses/my", requireAuth, async (req: AuthenticatedRequest, res): P
       return;
     }
 
-    const courses = await Promise.all((data ?? []).map(enrichCourse));
+    const courses = await enrichCourses(data ?? []);
     res.json(courses);
     return;
   }
@@ -126,7 +126,7 @@ router.get("/courses/my", requireAuth, async (req: AuthenticatedRequest, res): P
     return;
   }
 
-  const courses = await Promise.all((data ?? []).map(enrichCourse));
+  const courses = await enrichCourses(data ?? []);
   res.json(courses);
 });
 
@@ -151,7 +151,7 @@ router.get("/courses", requireAuth, async (req: AuthenticatedRequest, res): Prom
     return;
   }
 
-  const courses = await Promise.all((data ?? []).map(enrichCourse));
+  const courses = await enrichCourses(data ?? []);
   res.json(courses);
 });
 
@@ -552,6 +552,60 @@ async function enrichCourse(c: Record<string, unknown>) {
     createdByName,
     createdAt: c.created_at ?? null,
   };
+}
+
+// Batched version of enrichCourse for list endpoints — one profiles query
+// for all teacher/creator ids and one enrollments query for all courses,
+// instead of 3 queries per course.
+async function enrichCourses(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return [];
+
+  const profileIds = new Set<string>();
+  const courseIds: string[] = [];
+  for (const c of rows) {
+    if (c.teacher_id) profileIds.add(c.teacher_id as string);
+    if (c.created_by) profileIds.add(c.created_by as string);
+    courseIds.push(c.id as string);
+  }
+
+  const { data: profiles } = profileIds.size
+    ? await supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", Array.from(profileIds))
+    : { data: [] as { id: string; first_name: string | null; last_name: string | null }[] };
+
+  const nameById = new Map(
+    (profiles ?? []).map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(" ") || null])
+  );
+
+  const { data: enrollments } = await supabaseAdmin
+    .from("course_enrollments")
+    .select("course_id")
+    .in("course_id", courseIds)
+    .eq("status", "active");
+
+  const countByCourse = new Map<string, number>();
+  for (const e of enrollments ?? []) {
+    const cid = e.course_id as string;
+    countByCourse.set(cid, (countByCourse.get(cid) ?? 0) + 1);
+  }
+
+  return rows.map((c) => ({
+    id: c.id,
+    schoolId: c.school_id,
+    programId: c.program_id,
+    teacherId: c.teacher_id,
+    title: c.title,
+    code: c.code,
+    term: c.term,
+    termStartDate: c.term_start_date,
+    termEndDate: c.term_end_date,
+    description: c.description,
+    isPublished: c.is_published,
+    teacherName: c.teacher_id ? nameById.get(c.teacher_id as string) ?? null : null,
+    studentCount: countByCourse.get(c.id as string) ?? 0,
+    createdBy: c.created_by ?? null,
+    createdByName: c.created_by ? nameById.get(c.created_by as string) ?? null : null,
+    createdAt: c.created_at ?? null,
+  }));
 }
 
 // GET /courses/:id/audit-log — who created this course and every teacher

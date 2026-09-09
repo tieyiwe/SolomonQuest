@@ -105,7 +105,7 @@ router.get("/reminders", requireAuth, async (req: AuthenticatedRequest, res): Pr
     return;
   }
 
-  const enriched = await Promise.all((data ?? []).map(enrichReminder));
+  const enriched = await enrichReminders(data ?? []);
   res.json(enriched);
 });
 
@@ -180,6 +180,47 @@ async function enrichReminder(r: Record<string, unknown>) {
     type: r.type,
     createdAt: r.created_at,
   };
+}
+
+async function enrichReminders(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return [];
+
+  const targetUserIds = Array.from(
+    new Set(rows.filter((r) => r.target_user_id).map((r) => r.target_user_id as string))
+  );
+  const courseIds = Array.from(
+    new Set(rows.filter((r) => r.course_id).map((r) => r.course_id as string))
+  );
+
+  const [profilesRes, coursesRes] = await Promise.all([
+    targetUserIds.length
+      ? supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", targetUserIds)
+      : Promise.resolve({ data: [] as { id: string; first_name: string | null; last_name: string | null }[] }),
+    courseIds.length
+      ? supabaseAdmin.from("courses").select("id, title").in("id", courseIds)
+      : Promise.resolve({ data: [] as { id: string; title: string | null }[] }),
+  ]);
+
+  const nameById = new Map(
+    (profilesRes.data ?? []).map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(" ") || null])
+  );
+  const titleById = new Map((coursesRes.data ?? []).map((c) => [c.id, c.title ?? null]));
+
+  return rows.map((r) => ({
+    id: r.id,
+    schoolId: r.school_id,
+    createdBy: r.created_by,
+    targetUserId: r.target_user_id,
+    targetUserName: r.target_user_id ? nameById.get(r.target_user_id as string) ?? null : null,
+    targetRole: r.target_role,
+    courseId: r.course_id,
+    courseName: r.course_id ? titleById.get(r.course_id as string) ?? null : null,
+    message: r.message,
+    sendAt: r.send_at,
+    sent: r.sent,
+    type: r.type,
+    createdAt: r.created_at,
+  }));
 }
 
 export default router;

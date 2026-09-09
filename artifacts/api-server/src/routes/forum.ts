@@ -212,6 +212,142 @@ async function enrichComment(comment: Record<string, unknown>) {
   };
 }
 
+// Batched version of enrichTopic for list endpoints — one profiles query,
+// one comment-count query, one reaction-count query, and one mentions
+// query across all topics, instead of 4 queries per topic.
+async function enrichTopics(topics: Record<string, unknown>[]) {
+  if (topics.length === 0) return [];
+
+  const topicIds = topics.map((t) => t.id as string);
+  const posterIds = Array.from(
+    new Set(topics.filter((t) => t.posted_by).map((t) => t.posted_by as string))
+  );
+
+  const [profilesRes, commentsRes, reactionsRes, mentionsRes] = await Promise.all([
+    posterIds.length
+      ? supabaseAdmin.from("profiles").select("id, first_name, last_name, avatar_url").in("id", posterIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    supabaseAdmin.from("forum_comments").select("topic_id").in("topic_id", topicIds),
+    supabaseAdmin.from("forum_reactions").select("topic_id").in("topic_id", topicIds),
+    supabaseAdmin.from("forum_mentions").select("topic_id, mentioned_user_id").in("topic_id", topicIds),
+  ]);
+
+  const profileById = new Map((profilesRes.data ?? []).map((p) => [p.id as string, p]));
+
+  const commentCountByTopic = new Map<string, number>();
+  for (const c of commentsRes.data ?? []) {
+    const tid = c.topic_id as string;
+    commentCountByTopic.set(tid, (commentCountByTopic.get(tid) ?? 0) + 1);
+  }
+
+  const reactionCountByTopic = new Map<string, number>();
+  for (const r of reactionsRes.data ?? []) {
+    const tid = r.topic_id as string;
+    reactionCountByTopic.set(tid, (reactionCountByTopic.get(tid) ?? 0) + 1);
+  }
+
+  const mentionedIdsByTopic = new Map<string, string[]>();
+  for (const m of mentionsRes.data ?? []) {
+    const tid = m.topic_id as string;
+    const arr = mentionedIdsByTopic.get(tid) ?? [];
+    arr.push(m.mentioned_user_id as string);
+    mentionedIdsByTopic.set(tid, arr);
+  }
+
+  const allMentionedIds = Array.from(new Set(Array.from(mentionedIdsByTopic.values()).flat()));
+  const { data: mentionProfiles } = allMentionedIds.length
+    ? await supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", allMentionedIds)
+    : { data: [] as { id: string; first_name: string | null; last_name: string | null }[] };
+  const mentionProfileById = new Map((mentionProfiles ?? []).map((p) => [p.id, p]));
+
+  return topics.map((topic) => {
+    const tid = topic.id as string;
+    const profile = topic.posted_by ? profileById.get(topic.posted_by as string) ?? null : null;
+    const mentions = (mentionedIdsByTopic.get(tid) ?? []).map((id) => {
+      const p = mentionProfileById.get(id);
+      return { id, firstName: p?.first_name ?? null, lastName: p?.last_name ?? null };
+    });
+
+    return {
+      id: topic.id,
+      schoolId: topic.school_id,
+      courseId: topic.course_id,
+      programId: topic.program_id ?? null,
+      title: topic.title,
+      content: topic.content,
+      coverImage: topic.cover_image ?? null,
+      isPinned: topic.is_pinned,
+      postedBy: topic.posted_by,
+      postedByProfile: profile,
+      commentCount: commentCountByTopic.get(tid) ?? 0,
+      reactionCount: reactionCountByTopic.get(tid) ?? 0,
+      mentions,
+      createdAt: topic.created_at,
+      updatedAt: topic.updated_at,
+    };
+  });
+}
+
+async function enrichComments(comments: Record<string, unknown>[]) {
+  if (comments.length === 0) return [];
+
+  const commentIds = comments.map((c) => c.id as string);
+  const posterIds = Array.from(
+    new Set(comments.filter((c) => c.posted_by).map((c) => c.posted_by as string))
+  );
+
+  const [profilesRes, reactionsRes, mentionsRes] = await Promise.all([
+    posterIds.length
+      ? supabaseAdmin.from("profiles").select("id, first_name, last_name, avatar_url").in("id", posterIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    supabaseAdmin.from("forum_reactions").select("comment_id").in("comment_id", commentIds),
+    supabaseAdmin.from("forum_mentions").select("comment_id, mentioned_user_id").in("comment_id", commentIds),
+  ]);
+
+  const profileById = new Map((profilesRes.data ?? []).map((p) => [p.id as string, p]));
+
+  const reactionCountByComment = new Map<string, number>();
+  for (const r of reactionsRes.data ?? []) {
+    const cid = r.comment_id as string;
+    reactionCountByComment.set(cid, (reactionCountByComment.get(cid) ?? 0) + 1);
+  }
+
+  const mentionedIdsByComment = new Map<string, string[]>();
+  for (const m of mentionsRes.data ?? []) {
+    const cid = m.comment_id as string;
+    const arr = mentionedIdsByComment.get(cid) ?? [];
+    arr.push(m.mentioned_user_id as string);
+    mentionedIdsByComment.set(cid, arr);
+  }
+
+  const allMentionedIds = Array.from(new Set(Array.from(mentionedIdsByComment.values()).flat()));
+  const { data: mentionProfiles } = allMentionedIds.length
+    ? await supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", allMentionedIds)
+    : { data: [] as { id: string; first_name: string | null; last_name: string | null }[] };
+  const mentionProfileById = new Map((mentionProfiles ?? []).map((p) => [p.id, p]));
+
+  return comments.map((comment) => {
+    const cid = comment.id as string;
+    const profile = comment.posted_by ? profileById.get(comment.posted_by as string) ?? null : null;
+    const mentions = (mentionedIdsByComment.get(cid) ?? []).map((id) => {
+      const p = mentionProfileById.get(id);
+      return { id, firstName: p?.first_name ?? null, lastName: p?.last_name ?? null };
+    });
+
+    return {
+      id: comment.id,
+      topicId: comment.topic_id,
+      content: comment.content,
+      postedBy: comment.posted_by,
+      postedByProfile: profile,
+      reactionCount: reactionCountByComment.get(cid) ?? 0,
+      mentions,
+      createdAt: comment.created_at,
+      updatedAt: comment.updated_at,
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // GET /forum/topics — list topics
 // ---------------------------------------------------------------------------
@@ -254,7 +390,7 @@ router.get(
       if (ok) visible.push(topic);
     }
 
-    const topics = await Promise.all(visible.map(enrichTopic));
+    const topics = await enrichTopics(visible);
     res.json(topics);
   }
 );
@@ -400,9 +536,7 @@ router.get(
       return;
     }
 
-    const enrichedComments = await Promise.all(
-      (commentsRes.data ?? []).map(enrichComment)
-    );
+    const enrichedComments = await enrichComments(commentsRes.data ?? []);
 
     // Attach per-comment reactions
     const commentIds = (commentsRes.data ?? []).map((c) => c.id as string);

@@ -58,7 +58,7 @@ router.get("/assignments/:assignmentId/submissions", requireAuth, async (req: Au
     return;
   }
 
-  const submissions = await Promise.all((data ?? []).map(enrichSubmission));
+  const submissions = await enrichSubmissions(data ?? []);
   res.json(submissions);
 });
 
@@ -241,6 +241,33 @@ async function enrichSubmission(s: Record<string, unknown>) {
     status: s.status,
     studentName,
   };
+}
+
+async function enrichSubmissions(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return [];
+
+  const studentIds = Array.from(
+    new Set(rows.filter((s) => s.student_id).map((s) => s.student_id as string))
+  );
+
+  const { data: profiles } = studentIds.length
+    ? await supabaseAdmin.from("profiles").select("id, first_name, last_name").in("id", studentIds)
+    : { data: [] as { id: string; first_name: string | null; last_name: string | null }[] };
+
+  const nameById = new Map(
+    (profiles ?? []).map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(" ") || null])
+  );
+
+  return rows.map((s) => ({
+    id: s.id,
+    assignmentId: s.assignment_id,
+    studentId: s.student_id,
+    content: s.content,
+    grade: s.grade,
+    rubricScores: s.rubric_scores ?? null,
+    status: s.status,
+    studentName: s.student_id ? nameById.get(s.student_id as string) ?? null : null,
+  }));
 }
 
 export default router;
