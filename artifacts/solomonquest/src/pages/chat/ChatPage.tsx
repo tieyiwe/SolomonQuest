@@ -1894,11 +1894,16 @@ export default function ChatPage() {
   // Realtime subscription
   // -------------------------------------------------------------------------
 
+  // Messages, read receipts, and reactions for the active channel all share
+  // the same open-conversation lifecycle, so they multiplex onto one socket
+  // instead of three.
   useEffect(() => {
     if (!activeChannel) return;
     const channelId = activeChannel.id;
-    const sub = supabase
-      .channel(`chat-messages:${channelId}`)
+    const isDirectWithOther = activeChannel.type === "direct" && !!activeChannel.otherUser;
+    const otherUserId = activeChannel.otherUser?.id;
+    const channel = supabase
+      .channel(`chat-active:${channelId}`)
       .on(
         "postgres_changes",
         {
@@ -1951,51 +1956,6 @@ export default function ChatPage() {
           }
         }
       )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(sub);
-    };
-  }, [activeChannel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Live read-receipt updates: when the other member of a DM updates their
-  // last_read_at, refresh activeChannel.otherUser so the double-check marks
-  // flip without needing a manual refetch.
-  useEffect(() => {
-    if (!activeChannel || activeChannel.type !== "direct" || !activeChannel.otherUser) return;
-    const otherUserId = activeChannel.otherUser.id;
-    const channelId = activeChannel.id;
-    const sub = supabase
-      .channel(`chat-read-receipt:${channelId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "chat_channel_members",
-          filter: `channel_id=eq.${channelId}`,
-        },
-        (payload) => {
-          const row = payload.new as { user_id?: string; last_read_at?: string | null };
-          if (row.user_id !== otherUserId) return;
-          setActiveChannel((prev) =>
-            prev && prev.otherUser
-              ? { ...prev, otherUser: { ...prev.otherUser, lastReadAt: row.last_read_at ?? null } }
-              : prev
-          );
-        }
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(sub);
-    };
-  }, [activeChannel?.id, activeChannel?.type, activeChannel?.otherUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Live reaction updates for the active channel's messages.
-  useEffect(() => {
-    if (!activeChannel) return;
-    const channelId = activeChannel.id;
-    const sub = supabase
-      .channel(`chat-reactions:${channelId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "chat_message_reactions" },
@@ -2013,12 +1973,37 @@ export default function ChatPage() {
             })
             .catch(() => {});
         }
-      )
-      .subscribe();
+      );
+
+    // Live read-receipt updates: when the other member of a DM updates their
+    // last_read_at, refresh activeChannel.otherUser so the double-check marks
+    // flip without needing a manual refetch.
+    if (isDirectWithOther) {
+      channel.on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "chat_channel_members",
+          filter: `channel_id=eq.${channelId}`,
+        },
+        (payload) => {
+          const row = payload.new as { user_id?: string; last_read_at?: string | null };
+          if (row.user_id !== otherUserId) return;
+          setActiveChannel((prev) =>
+            prev && prev.otherUser
+              ? { ...prev, otherUser: { ...prev.otherUser, lastReadAt: row.last_read_at ?? null } }
+              : prev
+          );
+        }
+      );
+    }
+
+    channel.subscribe();
     return () => {
-      supabase.removeChannel(sub);
+      supabase.removeChannel(channel);
     };
-  }, [activeChannel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeChannel?.id, activeChannel?.type, activeChannel?.otherUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // -------------------------------------------------------------------------
   // Incoming call ringing — subscribed for every channel the user belongs
@@ -2036,9 +2021,12 @@ export default function ChatPage() {
   // Unread tracking: listen for new messages across every channel the user
   // belongs to (not just the one currently open), so a channel you're not
   // looking at shows an unread indicator the moment someone else messages it.
+  // Unread tracking and call ringing both run for the page's whole lifetime,
+  // independent of which conversation is open, so they share one socket
+  // distinct from the per-conversation channel above.
   useEffect(() => {
     const sub = supabase
-      .channel("chat-unread-tracker")
+      .channel("chat-user-global")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_messages" },
@@ -2056,15 +2044,6 @@ export default function ChatPage() {
           );
         }
       )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(sub);
-    };
-  }, [currentUserId]);
-
-  useEffect(() => {
-    const sub = supabase
-      .channel("chat-calls-ring")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_calls" },
