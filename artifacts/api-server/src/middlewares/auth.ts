@@ -1,6 +1,7 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import { getCachedProfile, setCachedProfile } from "../lib/profileCache";
+import { verifyAccessToken } from "../lib/verifyToken";
 
 export interface AuthenticatedRequest extends Request {
   userId?: string;
@@ -22,33 +23,33 @@ export async function requireAuth(
     }
 
     const token = authHeader.substring(7);
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    const verified = await verifyAccessToken(token);
 
-    if (error || !data.user) {
+    if (!verified) {
       res.status(401).json({ error: "Invalid token" });
       return;
     }
 
-    let cached = getCachedProfile(data.user.id);
+    let cached = getCachedProfile(verified.id);
     if (!cached) {
       const { data: profile } = await supabaseAdmin
         .from("profiles")
         .select("role, school_id")
-        .eq("id", data.user.id)
+        .eq("id", verified.id)
         .single();
-      setCachedProfile(data.user.id, profile?.role ?? null, profile?.school_id ?? null);
-      cached = getCachedProfile(data.user.id);
+      setCachedProfile(verified.id, profile?.role ?? null, profile?.school_id ?? null);
+      cached = getCachedProfile(verified.id);
     }
 
     // Set typed user object
     req.user = {
-      id: data.user.id,
+      id: verified.id,
       role: cached?.role ?? "",
       school_id: cached?.schoolId ?? null,
     };
 
     // Keep legacy fields for backward compat
-    req.userId = data.user.id;
+    req.userId = verified.id;
     req.userRole = cached?.role ?? undefined;
     req.schoolId = cached?.schoolId ?? undefined;
 
@@ -67,26 +68,26 @@ export async function optionalAuth(
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7);
-      const { data } = await supabaseAdmin.auth.getUser(token);
-      if (data.user) {
-        req.userId = data.user.id;
-        let cached = getCachedProfile(data.user.id);
+      const verified = await verifyAccessToken(token);
+      if (verified) {
+        req.userId = verified.id;
+        let cached = getCachedProfile(verified.id);
         if (!cached) {
           const { data: profile } = await supabaseAdmin
             .from("profiles")
             .select("role, school_id")
-            .eq("id", data.user.id)
+            .eq("id", verified.id)
             .single();
           if (profile) {
-            setCachedProfile(data.user.id, profile.role ?? null, profile.school_id ?? null);
-            cached = getCachedProfile(data.user.id);
+            setCachedProfile(verified.id, profile.role ?? null, profile.school_id ?? null);
+            cached = getCachedProfile(verified.id);
           }
         }
         if (cached) {
           req.userRole = cached.role ?? undefined;
           req.schoolId = cached.schoolId ?? undefined;
           req.user = {
-            id: data.user.id,
+            id: verified.id,
             role: cached.role ?? "",
             school_id: cached.schoolId ?? null,
           };
