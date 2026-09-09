@@ -6,6 +6,7 @@ import { enrollUserInSchoolChannels } from "./chat";
 import { enrollStudentInCourse } from "../lib/enrollment";
 import { notifyUsers } from "../lib/notifications";
 import { logPlatformAction } from "../lib/auditLog";
+import { invalidateCachedProfile } from "../lib/profileCache";
 
 const router: IRouter = Router();
 
@@ -454,6 +455,8 @@ router.post(
         res.status(500).json({ error: "Failed to update profile" });
         return;
       }
+
+      invalidateCachedProfile(userId!);
 
       // Auto-enroll user in school's public chat channels (non-blocking)
       enrollUserInSchoolChannels(userId!, invitation.school_id, invitation.invited_by).catch((e) =>

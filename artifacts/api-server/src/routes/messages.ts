@@ -59,7 +59,8 @@ router.get(
       .eq("from_user_id", userId)
       .is("parent_id", null)
       .not("deleted_by", "cs", `["${userId}"]`)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(200);
 
     if (error) {
       res.status(500).json({ error: error.message });
@@ -136,7 +137,7 @@ router.get(
       query = query.eq("to_user_id", userId);
     }
 
-    const { data, error } = await query;
+    const { data, error } = await query.limit(200);
 
     if (error) {
       res.status(500).json({ error: error.message });

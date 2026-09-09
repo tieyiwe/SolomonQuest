@@ -1,5 +1,6 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { supabaseAdmin } from "../lib/supabase";
+import { getCachedProfile, setCachedProfile } from "../lib/profileCache";
 
 export interface AuthenticatedRequest extends Request {
   userId?: string;
@@ -28,24 +29,28 @@ export async function requireAuth(
       return;
     }
 
-    // Fetch profile to get role + school
-    const { data: profile } = await supabaseAdmin
-      .from("profiles")
-      .select("role, school_id")
-      .eq("id", data.user.id)
-      .single();
+    let cached = getCachedProfile(data.user.id);
+    if (!cached) {
+      const { data: profile } = await supabaseAdmin
+        .from("profiles")
+        .select("role, school_id")
+        .eq("id", data.user.id)
+        .single();
+      setCachedProfile(data.user.id, profile?.role ?? null, profile?.school_id ?? null);
+      cached = getCachedProfile(data.user.id);
+    }
 
     // Set typed user object
     req.user = {
       id: data.user.id,
-      role: profile?.role ?? "",
-      school_id: profile?.school_id ?? null,
+      role: cached?.role ?? "",
+      school_id: cached?.schoolId ?? null,
     };
 
     // Keep legacy fields for backward compat
     req.userId = data.user.id;
-    req.userRole = profile?.role;
-    req.schoolId = profile?.school_id;
+    req.userRole = cached?.role ?? undefined;
+    req.schoolId = cached?.schoolId ?? undefined;
 
     next();
   } catch (_err) {
@@ -65,18 +70,25 @@ export async function optionalAuth(
       const { data } = await supabaseAdmin.auth.getUser(token);
       if (data.user) {
         req.userId = data.user.id;
-        const { data: profile } = await supabaseAdmin
-          .from("profiles")
-          .select("role, school_id")
-          .eq("id", data.user.id)
-          .single();
-        if (profile) {
-          req.userRole = profile.role;
-          req.schoolId = profile.school_id;
+        let cached = getCachedProfile(data.user.id);
+        if (!cached) {
+          const { data: profile } = await supabaseAdmin
+            .from("profiles")
+            .select("role, school_id")
+            .eq("id", data.user.id)
+            .single();
+          if (profile) {
+            setCachedProfile(data.user.id, profile.role ?? null, profile.school_id ?? null);
+            cached = getCachedProfile(data.user.id);
+          }
+        }
+        if (cached) {
+          req.userRole = cached.role ?? undefined;
+          req.schoolId = cached.schoolId ?? undefined;
           req.user = {
             id: data.user.id,
-            role: profile.role ?? "",
-            school_id: profile.school_id ?? null,
+            role: cached.role ?? "",
+            school_id: cached.schoolId ?? null,
           };
         }
       }

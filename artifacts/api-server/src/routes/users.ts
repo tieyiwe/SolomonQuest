@@ -4,6 +4,7 @@ import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { sendPasswordResetEmail } from "../lib/email";
 import { notifyUsers } from "../lib/notifications";
 import { logPlatformAction } from "../lib/auditLog";
+import { invalidateCachedProfile } from "../lib/profileCache";
 
 const router: IRouter = Router();
 
@@ -140,6 +141,8 @@ router.put("/users/me/join-school", requireAuth, async (req: AuthenticatedReques
     res.status(500).json({ error: "Failed to join school" });
     return;
   }
+
+  invalidateCachedProfile(req.userId!);
 
   // Auto-enroll in school's public chat channels
   try {
@@ -607,6 +610,8 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthenticatedRequest, r
     res.status(404).json({ error: "User not found" });
     return;
   }
+
+  invalidateCachedProfile(id);
 
   logPlatformAction({
     action: "user.role_changed",
