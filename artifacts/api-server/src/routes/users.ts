@@ -3,6 +3,7 @@ import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { sendPasswordResetEmail } from "../lib/email";
 import { notifyUsers } from "../lib/notifications";
+import { logPlatformAction } from "../lib/auditLog";
 
 const router: IRouter = Router();
 
@@ -607,6 +608,15 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthenticatedRequest, r
     return;
   }
 
+  logPlatformAction({
+    action: "user.role_changed",
+    performedBy: req.userId,
+    targetType: "user",
+    targetId: id,
+    targetName: [data.first_name, data.last_name].filter(Boolean).join(" ") || id,
+    metadata: { newRole: role },
+  });
+
   res.json(mapProfile(data, data.email as string | null));
 });
 
@@ -746,6 +756,13 @@ router.post("/users/admin/reset-password", requireAuth, async (req: Authenticate
     return;
   }
 
+  logPlatformAction({
+    action: "user.password_set_by_admin",
+    performedBy: req.userId,
+    targetType: "user",
+    targetId: user_id,
+  });
+
   res.json({ success: true });
 });
 
@@ -801,6 +818,14 @@ router.post("/users/:id/reset-password", requireAuth, async (req: AuthenticatedR
   await sendPasswordResetEmail({
     to: userEmail,
     resetUrl: resetLink,
+  });
+
+  logPlatformAction({
+    action: "user.password_reset_sent",
+    performedBy: req.userId,
+    targetType: "user",
+    targetId: id,
+    targetName: [targetProfile.first_name, targetProfile.last_name].filter(Boolean).join(" ") || id,
   });
 
   res.json({ success: true, message: "Password reset email sent" });

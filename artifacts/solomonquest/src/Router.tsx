@@ -52,6 +52,7 @@ const NotificationsPage = lazy(() => import("@/pages/notifications/Notifications
 const MessagesPage = lazy(() => import("@/pages/messages/MessagesPage"));
 const SuperAdminDashboard = lazy(() => import("@/pages/super-admin/SuperAdminDashboard"));
 const AdminDangerZone = lazy(() => import("@/pages/admin/AdminDangerZone"));
+const AdminAuditLog = lazy(() => import("@/pages/admin/AdminAuditLog"));
 const AcceptInvitePage = lazy(() => import("@/pages/auth/AcceptInvitePage"));
 const ResetPassword = lazy(() => import("@/pages/auth/ResetPassword"));
 const HelpPage = lazy(() => import("@/pages/HelpPage"));
@@ -234,6 +235,9 @@ export function Router() {
         </Route>
         <Route path="/dashboard/admin/danger-zone">
           <ProtectedRoute allowedRoles={["admin","super_admin"]}><AdminDangerZone /></ProtectedRoute>
+        </Route>
+        <Route path="/dashboard/admin/audit-log">
+          <ProtectedRoute allowedRoles={["admin","super_admin"]}><AdminAuditLog /></ProtectedRoute>
         </Route>
 
         {/* Settings Routes */}

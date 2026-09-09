@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Layers,
   CalendarDays,
+  History,
 } from "lucide-react";
 import { TourOverlay, useTour } from "@/components/tour/TourOverlay";
 import { HelpCenter } from "@/components/help/HelpCenter";
@@ -41,6 +42,7 @@ const adminLinks = [
   { href: "/dashboard/admin/admissions", label: "Admissions", icon: CheckSquare },
   { href: "/dashboard/admin/resources", label: "Resources", icon: FolderOpen },
   { href: "/dashboard/admin/analytics", label: "Analytics", icon: BarChart2 },
+  { href: "/dashboard/admin/audit-log", label: "Audit Log", icon: History },
   { href: "/dashboard/admin/danger-zone", label: "Danger Zone", icon: AlertTriangle },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/help", label: "Help Center", icon: HelpCircle },

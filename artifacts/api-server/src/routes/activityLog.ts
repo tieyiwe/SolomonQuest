@@ -44,6 +44,10 @@ router.get("/activity-log", requireAuth, async (req: AuthenticatedRequest, res):
 
   const limit = Math.min(parseInt(req.query.limit as string || "100"), 500);
   const offset = parseInt(req.query.offset as string || "0");
+  const actionFilter = req.query.action as string | undefined;
+  const performedByFilter = req.query.performedBy as string | undefined;
+  const fromDate = req.query.from as string | undefined;
+  const toDate = req.query.to as string | undefined;
 
   // Fetch log entries for users in this school
   const { data: schoolUsers } = await supabaseAdmin
@@ -57,12 +61,19 @@ router.get("/activity-log", requireAuth, async (req: AuthenticatedRequest, res):
     return;
   }
 
-  const { data, error, count } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("platform_audit_log")
     .select("*, profiles:performed_by(first_name, last_name, email, role)", { count: "exact" })
     .in("performed_by", userIds)
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
+
+  if (actionFilter) query = query.eq("action", actionFilter);
+  if (performedByFilter) query = query.eq("performed_by", performedByFilter);
+  if (fromDate) query = query.gte("created_at", fromDate);
+  if (toDate) query = query.lte("created_at", toDate);
+
+  const { data, error, count } = await query;
 
   if (error) {
     res.status(500).json({ error: error.message });
@@ -89,6 +100,41 @@ router.get("/activity-log", requireAuth, async (req: AuthenticatedRequest, res):
     }),
     total: count ?? 0,
   });
+});
+
+// GET /activity-log/actions — distinct action types seen for this school,
+// for populating the filter dropdown without hardcoding a list client-side.
+router.get("/activity-log/actions", requireAuth, async (req: AuthenticatedRequest, res): Promise<void> => {
+  const role = req.userRole;
+  if (role !== "admin" && role !== "super_admin") {
+    res.status(403).json({ error: "Not authorized" });
+    return;
+  }
+
+  const { data: schoolUsers } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .eq("school_id", req.schoolId ?? "");
+
+  const userIds = (schoolUsers ?? []).map((u: { id: string }) => u.id);
+  if (userIds.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("platform_audit_log")
+    .select("action")
+    .in("performed_by", userIds)
+    .limit(2000);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  const actions = Array.from(new Set((data ?? []).map((r) => r.action as string))).sort();
+  res.json(actions);
 });
 
 export default router;

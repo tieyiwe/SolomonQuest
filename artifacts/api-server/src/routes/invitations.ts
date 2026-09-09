@@ -5,6 +5,7 @@ import { sendEnhancedInvite, sendWelcomeEmail } from "../lib/email";
 import { enrollUserInSchoolChannels } from "./chat";
 import { enrollStudentInCourse } from "../lib/enrollment";
 import { notifyUsers } from "../lib/notifications";
+import { logPlatformAction } from "../lib/auditLog";
 
 const router: IRouter = Router();
 
@@ -119,6 +120,15 @@ async function createInvitation(params: CreateInviteParams): Promise<CreateInvit
     console.error("[invitations] email send error:", emailError);
     // Do not fail — the invitation row is already created either way.
   }
+
+  logPlatformAction({
+    action: "invitation.sent",
+    performedBy: invitedBy,
+    targetType: "invitation",
+    targetId: invitation.id as string,
+    targetName: email,
+    metadata: { role },
+  });
 
   return { ok: true, invitation };
 }
