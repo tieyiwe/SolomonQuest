@@ -594,11 +594,16 @@ router.post(
     // Verify topic exists
     const { data: topic, error: topicError } = await supabaseAdmin
       .from("forum_topics")
-      .select("id, title, posted_by, course_id, program_id")
+      .select("id, title, posted_by, course_id, program_id, school_id")
       .eq("id", topicId)
       .single();
 
     if (topicError || !topic) {
+      res.status(404).json({ error: "Topic not found" });
+      return;
+    }
+
+    if (req.userRole !== "super_admin" && topic.school_id !== req.schoolId) {
       res.status(404).json({ error: "Topic not found" });
       return;
     }
@@ -686,11 +691,26 @@ router.post(
     // Verify topic exists and get author
     const { data: topic, error: topicError } = await supabaseAdmin
       .from("forum_topics")
-      .select("id, title, posted_by")
+      .select("id, title, posted_by, course_id, program_id, school_id")
       .eq("id", topicId)
       .single();
 
     if (topicError || !topic) {
+      res.status(404).json({ error: "Topic not found" });
+      return;
+    }
+
+    if (req.userRole !== "super_admin" && topic.school_id !== req.schoolId) {
+      res.status(404).json({ error: "Topic not found" });
+      return;
+    }
+
+    const canAccess = await canAccessForumScope(
+      req,
+      (topic.course_id as string | null) ?? null,
+      (topic.program_id as string | null) ?? null
+    );
+    if (!canAccess) {
       res.status(404).json({ error: "Topic not found" });
       return;
     }
@@ -746,11 +766,26 @@ router.post(
     // Verify comment exists and get author + topic info
     const { data: comment, error: commentError } = await supabaseAdmin
       .from("forum_comments")
-      .select("id, posted_by, topic_id")
+      .select("id, posted_by, topic_id, forum_topics:topic_id (course_id, program_id, school_id)")
       .eq("id", commentId)
       .single();
 
     if (commentError || !comment) {
+      res.status(404).json({ error: "Comment not found" });
+      return;
+    }
+
+    const parentTopic = comment.forum_topics as unknown as
+      | { course_id: string | null; program_id: string | null; school_id: string | null }
+      | null;
+
+    if (!parentTopic || (req.userRole !== "super_admin" && parentTopic.school_id !== req.schoolId)) {
+      res.status(404).json({ error: "Comment not found" });
+      return;
+    }
+
+    const canAccess = await canAccessForumScope(req, parentTopic.course_id, parentTopic.program_id);
+    if (!canAccess) {
       res.status(404).json({ error: "Comment not found" });
       return;
     }
@@ -799,11 +834,16 @@ router.delete(
 
     const { data: topic, error: fetchError } = await supabaseAdmin
       .from("forum_topics")
-      .select("id, posted_by")
+      .select("id, posted_by, school_id")
       .eq("id", topicId)
       .single();
 
     if (fetchError || !topic) {
+      res.status(404).json({ error: "Topic not found" });
+      return;
+    }
+
+    if (req.userRole !== "super_admin" && topic.school_id !== req.schoolId) {
       res.status(404).json({ error: "Topic not found" });
       return;
     }
@@ -842,11 +882,17 @@ router.delete(
 
     const { data: comment, error: fetchError } = await supabaseAdmin
       .from("forum_comments")
-      .select("id, posted_by")
+      .select("id, posted_by, forum_topics:topic_id (school_id)")
       .eq("id", commentId)
       .single();
 
     if (fetchError || !comment) {
+      res.status(404).json({ error: "Comment not found" });
+      return;
+    }
+
+    const commentSchoolId = (comment.forum_topics as unknown as { school_id: string | null } | null)?.school_id;
+    if (req.userRole !== "super_admin" && commentSchoolId !== req.schoolId) {
       res.status(404).json({ error: "Comment not found" });
       return;
     }
@@ -892,7 +938,13 @@ router.get(
       .limit(20);
 
     if (q) {
-      query = query.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%`);
+      // See users.ts's search route for why this must be stripped down to
+      // plain search characters — PostgREST's .or() filter string treats
+      // ',', '(', ')' as condition/grouping syntax.
+      const safeQ = q.replace(/[^\p{L}\p{N}\s@._-]/gu, "").slice(0, 100);
+      if (safeQ) {
+        query = query.or(`first_name.ilike.%${safeQ}%,last_name.ilike.%${safeQ}%`);
+      }
     }
 
     const { data, error } = await query;

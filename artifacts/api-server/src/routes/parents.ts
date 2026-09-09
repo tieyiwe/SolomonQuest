@@ -179,6 +179,18 @@ router.delete("/admin/parent-links", requireAuth, async (req: AuthenticatedReque
     return;
   }
 
+  if (req.userRole !== "super_admin") {
+    const { data: studentProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("school_id")
+      .eq("id", studentId)
+      .single();
+    if (!studentProfile || studentProfile.school_id !== req.schoolId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+  }
+
   const { error } = await supabaseAdmin
     .from("parent_student_links")
     .delete()
@@ -204,6 +216,18 @@ router.get("/admin/parent-links", requireAuth, async (req: AuthenticatedRequest,
   if (!studentId) {
     res.status(400).json({ error: "studentId query param is required" });
     return;
+  }
+
+  if (req.userRole !== "super_admin") {
+    const { data: studentProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("school_id")
+      .eq("id", studentId)
+      .single();
+    if (!studentProfile || studentProfile.school_id !== req.schoolId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
   }
 
   const { data, error } = await supabaseAdmin

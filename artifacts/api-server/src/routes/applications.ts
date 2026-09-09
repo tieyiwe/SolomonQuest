@@ -3,6 +3,7 @@ import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { sendApplicationStatusUpdate } from "../lib/email";
 import { enrollStudentInCourse } from "../lib/enrollment";
+import { invalidateCachedProfile } from "../lib/profileCache";
 
 const router: IRouter = Router();
 
@@ -403,6 +404,8 @@ router.patch(
           "[applications] Failed to update student profile:",
           profileError.message
         );
+      } else {
+        invalidateCachedProfile(existing.applicant_id as string);
       }
     }
 

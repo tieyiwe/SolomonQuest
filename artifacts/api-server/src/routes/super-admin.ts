@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { notifyUsers } from "../lib/notifications";
+import { invalidateCachedProfile } from "../lib/profileCache";
 
 const router: IRouter = Router();
 
@@ -665,6 +666,8 @@ router.patch(
         res.status(500).json({ error: updateErr.message });
         return;
       }
+
+      invalidateCachedProfile(id);
 
       await auditLog({
         actorId: req.userId,

@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { resolveTxt } from "dns/promises";
 import { supabaseAdmin } from "../lib/supabase";
 import { logger } from "../lib/logger";
+import { invalidateCachedProfile } from "../lib/profileCache";
 import { requireAuth, optionalAuth, type AuthenticatedRequest } from "../middlewares/auth";
 import { notifyUsers } from "../lib/notifications";
 
@@ -160,6 +161,8 @@ router.post("/schools/create", requireAuth, async (req: AuthenticatedRequest, re
     .from("profiles")
     .update({ school_id: data.id, role: "admin" })
     .eq("id", req.userId);
+
+  invalidateCachedProfile(req.userId!);
 
   const { data: superAdmins } = await supabaseAdmin.from("profiles").select("id").eq("role", "super_admin");
   const superAdminIds = (superAdmins ?? []).map((p) => p.id as string);
@@ -618,6 +621,8 @@ router.post(
         res.status(500).json({ error: promoteError.message });
         return;
       }
+
+      invalidateCachedProfile(newOwnerId);
     }
 
     const { data: updatedSchool, error: updateError } = await supabaseAdmin

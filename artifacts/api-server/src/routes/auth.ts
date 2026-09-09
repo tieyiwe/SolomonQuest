@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { supabaseAdmin } from "../lib/supabase";
 import { requireAuth, type AuthenticatedRequest } from "../middlewares/auth";
+import { invalidateCachedProfile } from "../lib/profileCache";
 
 const router: IRouter = Router();
 
@@ -54,6 +55,7 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
   // Auto-repair role: if user owns a school but has no role, set them as admin
   if (!profile.role && profile.school_id) {
     await supabaseAdmin.from("profiles").update({ role: "admin" }).eq("id", req.userId!);
+    invalidateCachedProfile(req.userId!);
     profile.role = "admin";
   } else if (!profile.role) {
     // Check if this user is the owner of any school
@@ -67,6 +69,7 @@ router.get("/auth/me", requireAuth, async (req: AuthenticatedRequest, res): Prom
         .from("profiles")
         .update({ role: "admin", school_id: ownedSchool.id })
         .eq("id", req.userId!);
+      invalidateCachedProfile(req.userId!);
       profile.role = "admin";
       profile.school_id = ownedSchool.id;
     }
