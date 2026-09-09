@@ -162,11 +162,19 @@ router.post("/courses", requireAuth, async (req: AuthenticatedRequest, res): Pro
     return;
   }
 
-  const { title, programId, teacherId, code, term, termStartDate, termEndDate, description } = req.body;
+  const { title, programId, teacherId, code, term, termStartDate, termEndDate, termId, description } = req.body;
 
   if (!title) {
     res.status(400).json({ error: "title is required" });
     return;
+  }
+
+  if (termId) {
+    const { data: termRow } = await supabaseAdmin.from("terms").select("id").eq("id", termId).eq("school_id", req.schoolId ?? "").maybeSingle();
+    if (!termRow) {
+      res.status(400).json({ error: "Term not found" });
+      return;
+    }
   }
 
   const { data, error } = await supabaseAdmin
@@ -180,6 +188,7 @@ router.post("/courses", requireAuth, async (req: AuthenticatedRequest, res): Pro
       term: term ?? null,
       term_start_date: termStartDate ?? null,
       term_end_date: termEndDate ?? null,
+      term_id: termId ?? null,
       description: description ?? null,
       is_published: false,
       created_by: req.userId,
@@ -247,7 +256,15 @@ router.patch("/courses/:id", requireAuth, async (req: AuthenticatedRequest, res)
     return;
   }
 
-  const { title, programId, teacherId, code, term, termStartDate, termEndDate, description, isPublished } = req.body;
+  const { title, programId, teacherId, code, term, termStartDate, termEndDate, termId, description, isPublished } = req.body;
+
+  if (termId) {
+    const { data: termRow } = await supabaseAdmin.from("terms").select("id").eq("id", termId).eq("school_id", req.schoolId ?? "").maybeSingle();
+    if (!termRow && req.userRole !== "super_admin") {
+      res.status(400).json({ error: "Term not found" });
+      return;
+    }
+  }
 
   const updates: Record<string, unknown> = {};
   if (title !== undefined) updates.title = title;
@@ -257,6 +274,7 @@ router.patch("/courses/:id", requireAuth, async (req: AuthenticatedRequest, res)
   if (term !== undefined) updates.term = term;
   if (termStartDate !== undefined) updates.term_start_date = termStartDate;
   if (termEndDate !== undefined) updates.term_end_date = termEndDate;
+  if (termId !== undefined) updates.term_id = termId;
   if (description !== undefined) updates.description = description;
   if (isPublished !== undefined) updates.is_published = isPublished;
 
@@ -544,6 +562,7 @@ async function enrichCourse(c: Record<string, unknown>) {
     term: c.term,
     termStartDate: c.term_start_date,
     termEndDate: c.term_end_date,
+    termId: c.term_id ?? null,
     description: c.description,
     isPublished: c.is_published,
     teacherName,
@@ -598,6 +617,7 @@ async function enrichCourses(rows: Record<string, unknown>[]) {
     term: c.term,
     termStartDate: c.term_start_date,
     termEndDate: c.term_end_date,
+    termId: c.term_id ?? null,
     description: c.description,
     isPublished: c.is_published,
     teacherName: c.teacher_id ? nameById.get(c.teacher_id as string) ?? null : null,

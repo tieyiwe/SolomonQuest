@@ -64,6 +64,9 @@ export function StudentLayout({ children }: StudentLayoutProps) {
     { href: "/dashboard/student/forum", label: "Forum", icon: MessageSquare, exact: false },
     { href: "/dashboard/student/transcript", label: "Transcript", icon: Scroll, exact: false },
     { href: "/chat", label: "Chat", icon: MessageSquare, exact: false },
+    ...(user?.role === "staff"
+      ? [{ href: "/dashboard/admin/terms", label: "Terms & Scheduling", icon: CalendarDays, exact: false }]
+      : []),
   ];
 
   // Only the 4 most-used destinations get their own bottom-nav tab — the

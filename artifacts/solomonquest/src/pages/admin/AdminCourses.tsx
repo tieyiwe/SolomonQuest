@@ -79,6 +79,7 @@ interface CourseFormData {
   term: string;
   termStartDate: string;
   termEndDate: string;
+  termId: string;
   description: string;
   teacherId: string;
   programId: string;
@@ -94,6 +95,7 @@ const defaultForm: CourseFormData = {
   term: "",
   termStartDate: "",
   termEndDate: "",
+  termId: "",
   description: "",
   teacherId: "",
   programId: "",
@@ -102,6 +104,22 @@ const defaultForm: CourseFormData = {
   classDate: "",
   classEndTime: "",
 };
+
+interface ScheduleTerm {
+  id: string;
+  name: string;
+}
+
+function useScheduleTerms() {
+  const [terms, setTerms] = useState<ScheduleTerm[]>([]);
+  useEffect(() => {
+    apiFetch("/api/terms")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setTerms((data ?? []).map((t: any) => ({ id: t.id, name: t.name }))))
+      .catch(() => {});
+  }, []);
+  return terms;
+}
 
 async function apiFetch(path: string, options: RequestInit = {}) {
   const {
@@ -421,6 +439,7 @@ function CourseFormDialog({
   const updateCourse = useUpdateCourse();
   const { data: teachers } = useListUsers({ role: "teacher" });
   const { data: programs } = useListPrograms();
+  const scheduleTerms = useScheduleTerms();
 
   const semesterOptions = generateSemesterOptions(new Date().getFullYear());
 
@@ -432,6 +451,7 @@ function CourseFormDialog({
           term: course.term || "",
           termStartDate: (course as any).termStartDate || "",
           termEndDate: (course as any).termEndDate || "",
+          termId: (course as any).termId || "",
           description: course.description || "",
           teacherId: course.teacherId || "",
           programId: (course as any).programId || "",
@@ -484,6 +504,7 @@ function CourseFormDialog({
       term: form.term || undefined,
       termStartDate: form.termStartDate || undefined,
       termEndDate: form.termEndDate || undefined,
+      termId: form.termId || undefined,
       description: form.description || undefined,
       teacherId: form.teacherId || undefined,
       programId: form.programId || undefined,
@@ -648,6 +669,27 @@ function CourseFormDialog({
             <p className="text-xs text-muted-foreground">
               Students enrolled in any course of this program are automatically enrolled in all
               of its other courses and can chat with everyone in the program.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Scheduling Term</Label>
+            <Select value={form.termId} onValueChange={(v) => set("termId", v)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Not scheduled to a term" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Not scheduled to a term</SelectItem>
+                {scheduleTerms.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Groups this class under a quarter/semester/cycle for scheduling — manage terms
+              under Admin → Terms & Scheduling.
             </p>
           </div>
 

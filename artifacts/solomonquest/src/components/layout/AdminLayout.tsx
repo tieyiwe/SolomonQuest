@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Layers,
   CalendarDays,
+  CalendarRange,
   History,
 } from "lucide-react";
 import { TourOverlay, useTour } from "@/components/tour/TourOverlay";
@@ -39,6 +40,7 @@ const adminLinks = [
   { href: "/dashboard/admin/users", label: "Users", icon: Users },
   { href: "/dashboard/admin/courses", label: "Courses", icon: BookOpen },
   { href: "/dashboard/admin/programs", label: "Programs", icon: Layers },
+  { href: "/dashboard/admin/terms", label: "Terms & Scheduling", icon: CalendarRange },
   { href: "/dashboard/admin/admissions", label: "Admissions", icon: CheckSquare },
   { href: "/dashboard/admin/resources", label: "Resources", icon: FolderOpen },
   { href: "/dashboard/admin/analytics", label: "Analytics", icon: BarChart2 },
