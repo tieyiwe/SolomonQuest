@@ -43,3 +43,4 @@ function makeClient(url: string, key: string): SupabaseClient {
 
 export const supabaseAdmin = makeClient(supabaseUrl, supabaseServiceKey);
 export const supabaseAnon = makeClient(supabaseUrl, supabaseAnonKey);
+export { supabaseUrl };
