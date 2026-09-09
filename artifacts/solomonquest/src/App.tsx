@@ -9,6 +9,8 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { NotesProvider } from "@/components/notes/NotesContext";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { TestModeSwitcher } from "@/components/TestModeSwitcher";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
+import { registerServiceWorker } from "@/lib/pwa";
 
 export const queryClient = new QueryClient();
 
@@ -53,6 +55,10 @@ function useCustomDomainRedirect() {
 function App() {
   const ready = useCustomDomainRedirect();
 
+  useEffect(() => {
+    registerServiceWorker();
+  }, []);
+
   if (!ready) return null;
 
   return (
@@ -65,6 +71,7 @@ function App() {
                 <ImpersonationBanner />
                 <Router />
                 <TestModeSwitcher />
+                <InstallPrompt />
                 <Toaster />
               </NotesProvider>
             </AuthProvider>
