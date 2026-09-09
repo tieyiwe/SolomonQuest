@@ -406,8 +406,18 @@ function UserTable({
       u.role ?? "",
       (u as any).uniqueStudentId ?? "",
     ]);
+    // Guard against CSV/formula injection: a cell that starts with =, +, -,
+    // @, tab, or CR is interpreted as a formula by Excel/Sheets when the
+    // exported file is opened, and these values (first/last name especially)
+    // are attacker-controlled — any user can set their own profile name.
+    // Prefixing with a leading apostrophe neutralizes the formula while
+    // keeping the value visible.
+    const sanitizeCell = (value: unknown) => {
+      const str = String(value);
+      return /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+    };
     const csv = [headers, ...rows]
-      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .map((r) => r.map((cell) => `"${sanitizeCell(cell).replace(/"/g, '""')}"`).join(","))
       .join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
